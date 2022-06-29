@@ -6,6 +6,7 @@ members = [
     "banking-bench",
     "banks-client",
     "banks-interface",
+    "bench-mango",
     "banks-server",
     "bench-streamer",
     "bench-tps",
