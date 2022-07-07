@@ -31,6 +31,7 @@ use solana_sdk::{
 };
 
 use std::{
+    collections::HashMap,
     fs,
     ops::{Div, Mul},
     process::exit,
@@ -41,7 +42,7 @@ use std::{
         Arc, RwLock,
     },
     thread::{sleep, Builder, JoinHandle},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH}, collections::HashMap,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 fn load_from_rpc<T: Loadable>(rpc_client: &RpcClient, pk: &Pubkey) -> T {
@@ -92,6 +93,18 @@ struct TransactionConfirmRecord {
     pub confirmed_at: Duration,
 }
 
+#[derive(Clone)]
+struct PerpMarketCache {
+    pub order_base_lots: i64,
+    pub price: I80F48,
+    pub price_quote_lots: i64,
+    pub mango_program_pk: Pubkey,
+    pub mango_group_pk: Pubkey,
+    pub mango_cache_pk: Pubkey,
+    pub perp_market_pk: Pubkey,
+    pub perp_market: PerpMarket,
+}
+
 fn poll_blockhash(
     exit_signal: &Arc<AtomicBool>,
     blockhash: &Arc<RwLock<Hash>>,
@@ -126,7 +139,7 @@ fn poll_blockhash(
 }
 
 fn main() {
-    solana_logger::setup_with_default("solana=debug");
+    solana_logger::setup_with_default("solana=info");
     solana_metrics::set_panic_hook("bench-mango", /*version:*/ None);
 
     let matches = cli::build_args(solana_version::version!()).get_matches();
@@ -139,6 +152,7 @@ fn main() {
         account_keys,
         mango_keys,
         duration,
+        quotes_per_second,
         ..
     } = &cli_config;
 
@@ -147,7 +161,6 @@ fn main() {
     let account_keys_json = fs::read_to_string(account_keys).expect("unable to read accounts file");
     let account_keys_parsed: Vec<AccountKeys> =
         serde_json::from_str(&account_keys_json).expect("accounts JSON was not well-formatted");
-    info!("accounts:{:?}", account_keys_parsed.len());
 
     let mango_keys_json = fs::read_to_string(mango_keys).expect("unable to read mango keys file");
     let mango_keys_parsed: MangoConfig =
@@ -175,6 +188,15 @@ fn main() {
         .unwrap(),
     );
 
+    info!(
+        "accounts:{:?} markets:{:?} quotes_per_second:{:?} expected_tps:{:?} duration:{:?}",
+        account_keys_parsed.len(),
+        mango_group_config.perp_markets.len(),
+        quotes_per_second,
+        account_keys_parsed.len() * mango_group_config.perp_markets.len() * quotes_per_second.clone() as usize,
+        duration
+    );
+
     // continuosly fetch blockhash
     let exit_signal = Arc::new(AtomicBool::new(false));
     let blockhash = Arc::new(RwLock::new(get_latest_blockhash(&rpc_client.clone())));
@@ -198,31 +220,42 @@ fn main() {
     let mango_cache_pk = Pubkey::from_str(mango_group.mango_cache.to_string().as_str()).unwrap();
     let mango_cache = load_from_rpc::<MangoCache>(&rpc_client, &mango_cache_pk);
 
-    // fetch market
-    let market_index = 0;
-    let perp_market_pk = Pubkey::from_str(
-        mango_group_config.perp_markets[market_index]
-            .public_key
-            .as_str(),
-    )
-    .unwrap();
-    let perp_market = load_from_rpc::<PerpMarket>(&rpc_client, &perp_market_pk);
+    let perp_market_caches: Vec<PerpMarketCache> = mango_group_config
+        .perp_markets
+        .iter()
+        .enumerate()
+        .map(|(market_index, perp_maket_config)| {
+            let perp_market_pk = Pubkey::from_str(perp_maket_config.public_key.as_str()).unwrap();
+            let perp_market = load_from_rpc::<PerpMarket>(&rpc_client, &perp_market_pk);
 
-    // fetch price
-    let base_decimals = mango_group_config.tokens[market_index + 1].decimals;
-    let quote_decimals = mango_group_config.tokens[0].decimals;
-    let base_unit = I80F48::from_num(10u64.pow(base_decimals as u32));
-    let quote_unit = I80F48::from_num(10u64.pow(quote_decimals as u32));
-    let price = mango_cache.price_cache[market_index].price;
-    let price_lots: i64 = price
-        .mul(quote_unit)
-        .mul(I80F48::from_num(perp_market.base_lot_size))
-        .div(I80F48::from_num(perp_market.quote_lot_size))
-        .div(base_unit)
-        .to_num();
-    let quantity_lots: i64 = base_unit
-        .div(I80F48::from_num(perp_market.base_lot_size))
-        .to_num();
+            // fetch price
+            let base_decimals = mango_group_config.tokens[market_index + 1].decimals;
+            let quote_decimals = mango_group_config.tokens[0].decimals;
+            let base_unit = I80F48::from_num(10u64.pow(base_decimals as u32));
+            let quote_unit = I80F48::from_num(10u64.pow(quote_decimals as u32));
+            let price = mango_cache.price_cache[market_index].price;
+            let price_quote_lots: i64 = price
+                .mul(quote_unit)
+                .mul(I80F48::from_num(perp_market.base_lot_size))
+                .div(I80F48::from_num(perp_market.quote_lot_size))
+                .div(base_unit)
+                .to_num();
+            let order_base_lots: i64 = base_unit
+                .div(I80F48::from_num(perp_market.base_lot_size))
+                .to_num();
+
+            PerpMarketCache {
+                order_base_lots,
+                price,
+                price_quote_lots,
+                mango_program_pk,
+                mango_group_pk,
+                mango_cache_pk,
+                perp_market_pk,
+                perp_market,
+            }
+        })
+        .collect();
 
     let (tx_record_sx, tx_record_rx) = channel::<TransactionSendRecord>();
     let tx_records: Arc<RwLock<Vec<TransactionConfirmRecord>>> = Arc::new(RwLock::new(Vec::new()));
@@ -234,9 +267,9 @@ fn main() {
             let tpu_client = tpu_client.clone();
             let blockhash = blockhash.clone();
             let duration = duration.clone();
-            // let comfirmation_sx = comfirmation_sx.clone();
+            let quotes_per_second = quotes_per_second.clone();
             let tx_record_sx = tx_record_sx.clone();
-
+            let perp_market_caches = perp_market_caches.clone();
             let mango_account_pk =
                 Pubkey::from_str(account_keys.mango_account_pks[0].as_str()).unwrap();
             let mango_account_signer =
@@ -252,113 +285,117 @@ fn main() {
                 .name("solana-client-sender".to_string())
                 .spawn(move || {
                     // update quotes 2x per second
-                    for _ in 1..(duration.as_secs() * 2) {
-                        let offset = rand::random::<i8>() as i64;
-                        let spread = rand::random::<u8>() as i64;
-                        debug!(
-                            "price:{:?} price_lots:{:?} quantity_lots:{:?} offset:{:?} spread:{:?}",
-                            price, price_lots, quantity_lots, offset, spread
-                        );
+                    for _ in 1..(duration.as_secs() * quotes_per_second) {
+                        for c in perp_market_caches.iter() {
 
-                        let cancel_ix: Instruction = serde_json::from_str(
-                            &serde_json::to_string(
-                                &cancel_all_perp_orders(
-                                    &pk_from_str_like(&mango_program_pk),
-                                    &pk_from_str_like(&mango_group_pk),
-                                    &pk_from_str_like(&mango_account_pk),
-                                    &(pk_from_str_like(&mango_account_signer.pubkey())),
-                                    &(pk_from_str_like(&perp_market_pk)),
-                                    &perp_market.bids,
-                                    &perp_market.asks,
-                                    10,
+                            let offset = rand::random::<i8>() as i64;
+                            let spread = rand::random::<u8>() as i64;
+                            debug!(
+                                "price:{:?} price_quote_lots:{:?} order_base_lots:{:?} offset:{:?} spread:{:?}",
+                                c.price, c.price_quote_lots, c.order_base_lots, offset, spread
+                            );
+    
+                            let cancel_ix: Instruction = serde_json::from_str(
+                                &serde_json::to_string(
+                                    &cancel_all_perp_orders(
+                                        &pk_from_str_like(&c.mango_program_pk),
+                                        &pk_from_str_like(&c.mango_group_pk),
+                                        &pk_from_str_like(&mango_account_pk),
+                                        &(pk_from_str_like(&mango_account_signer.pubkey())),
+                                        &(pk_from_str_like(&c.perp_market_pk)),
+                                        &c.perp_market.bids,
+                                        &c.perp_market.asks,
+                                        10,
+                                    )
+                                    .unwrap(),
                                 )
                                 .unwrap(),
                             )
-                            .unwrap(),
-                        )
-                        .unwrap();
-
-                        let place_bid_ix: Instruction = serde_json::from_str(
-                            &serde_json::to_string(
-                                &place_perp_order2(
-                                    &pk_from_str_like(&mango_program_pk),
-                                    &pk_from_str_like(&mango_group_pk),
-                                    &pk_from_str_like(&mango_account_pk),
-                                    &(pk_from_str_like(&mango_account_signer.pubkey())),
-                                    &pk_from_str_like(&mango_cache_pk),
-                                    &(pk_from_str_like(&perp_market_pk)),
-                                    &perp_market.bids,
-                                    &perp_market.asks,
-                                    &perp_market.event_queue,
-                                    None,
-                                    &[],
-                                    Side::Bid,
-                                    price_lots + offset - spread,
-                                    quantity_lots,
-                                    i64::MAX,
-                                    1,
-                                    mango::matching::OrderType::Limit,
-                                    false,
-                                    None,
-                                    64,
-                                    mango::matching::ExpiryType::Absolute,
+                            .unwrap();
+    
+                            let place_bid_ix: Instruction = serde_json::from_str(
+                                &serde_json::to_string(
+                                    &place_perp_order2(
+                                        &pk_from_str_like(&c.mango_program_pk),
+                                        &pk_from_str_like(&c.mango_group_pk),
+                                        &pk_from_str_like(&mango_account_pk),
+                                        &(pk_from_str_like(&mango_account_signer.pubkey())),
+                                        &pk_from_str_like(&c.mango_cache_pk),
+                                        &(pk_from_str_like(&c.perp_market_pk)),
+                                        &c.perp_market.bids,
+                                        &c.perp_market.asks,
+                                        &c.perp_market.event_queue,
+                                        None,
+                                        &[],
+                                        Side::Bid,
+                                        c.price_quote_lots + offset - spread,
+                                        c.order_base_lots,
+                                        i64::MAX,
+                                        1,
+                                        mango::matching::OrderType::Limit,
+                                        false,
+                                        None,
+                                        64,
+                                        mango::matching::ExpiryType::Absolute,
+                                    )
+                                    .unwrap(),
                                 )
                                 .unwrap(),
                             )
-                            .unwrap(),
-                        )
-                        .unwrap();
-
-                        let place_ask_ix: Instruction = serde_json::from_str(
-                            &serde_json::to_string(
-                                &place_perp_order2(
-                                    &pk_from_str_like(&mango_program_pk),
-                                    &pk_from_str_like(&mango_group_pk),
-                                    &pk_from_str_like(&mango_account_pk),
-                                    &(pk_from_str_like(&mango_account_signer.pubkey())),
-                                    &pk_from_str_like(&mango_cache_pk),
-                                    &(pk_from_str_like(&perp_market_pk)),
-                                    &perp_market.bids,
-                                    &perp_market.asks,
-                                    &perp_market.event_queue,
-                                    None,
-                                    &[],
-                                    Side::Ask,
-                                    price_lots + offset + spread,
-                                    quantity_lots,
-                                    i64::MAX,
-                                    1,
-                                    mango::matching::OrderType::Limit,
-                                    false,
-                                    None,
-                                    64,
-                                    mango::matching::ExpiryType::Absolute,
+                            .unwrap();
+    
+                            let place_ask_ix: Instruction = serde_json::from_str(
+                                &serde_json::to_string(
+                                    &place_perp_order2(
+                                        &pk_from_str_like(&c.mango_program_pk),
+                                        &pk_from_str_like(&c.mango_group_pk),
+                                        &pk_from_str_like(&mango_account_pk),
+                                        &(pk_from_str_like(&mango_account_signer.pubkey())),
+                                        &pk_from_str_like(&c.mango_cache_pk),
+                                        &(pk_from_str_like(&c.perp_market_pk)),
+                                        &c.perp_market.bids,
+                                        &c.perp_market.asks,
+                                        &c.perp_market.event_queue,
+                                        None,
+                                        &[],
+                                        Side::Ask,
+                                        c.price_quote_lots + offset + spread,
+                                        c.order_base_lots,
+                                        i64::MAX,
+                                        2,
+                                        mango::matching::OrderType::Limit,
+                                        false,
+                                        None,
+                                        64,
+                                        mango::matching::ExpiryType::Absolute,
+                                    )
+                                    .unwrap(),
                                 )
                                 .unwrap(),
                             )
-                            .unwrap(),
-                        )
-                        .unwrap();
-
-                        let mut tx = Transaction::new_unsigned(Message::new(
-                            &[cancel_ix, place_bid_ix, place_ask_ix],
-                            Some(&mango_account_signer.pubkey()),
-                        ));
-
-                        if let Ok(recent_blockhash) = blockhash.read() {
-                            tx.sign(&[&mango_account_signer], *recent_blockhash);
+                            .unwrap();
+    
+                            let mut tx = Transaction::new_unsigned(Message::new(
+                                &[cancel_ix, place_bid_ix, place_ask_ix],
+                                Some(&mango_account_signer.pubkey()),
+                            ));
+    
+                            if let Ok(recent_blockhash) = blockhash.read() {
+                                tx.sign(&[&mango_account_signer], *recent_blockhash);
+                            }
+    
+                            tx_record_sx
+                                .send(TransactionSendRecord {
+                                    signature: tx.signatures[0],
+                                    sent_at: Instant::now(),
+                                })
+                                .unwrap();
+    
+                            tpu_client.send_transaction(&tx);
                         }
 
-                        tx_record_sx
-                            .send(TransactionSendRecord {
-                                signature: tx.signatures[0],
-                                sent_at: Instant::now(),
-                            })
-                            .unwrap();
 
-                        tpu_client.send_transaction(&tx);
-
-                        sleep(Duration::from_millis(500));
+                        sleep(Duration::from_millis(1000 / quotes_per_second));
                     }
                 })
                 .unwrap()
@@ -368,26 +405,95 @@ fn main() {
     drop(tx_record_sx);
     let confirmed = tx_records.clone();
     let duration = duration.clone();
+    let quotes_per_second = quotes_per_second.clone();
     let account_keys_parsed = account_keys_parsed.clone();
     let confirmation_thread = Builder::new()
         .name("solana-client-sender".to_string())
         .spawn(move || {
             let mut to_confirm: Vec<TransactionSendRecord> = Vec::new();
 
+            const TIMEOUT: u64 = 30;
+            let RECV_LIMIT = account_keys_parsed.len() * perp_market_caches.len() * 10 * quotes_per_second as usize;
+            let mut recv_until_confirm = RECV_LIMIT;
             loop {
+                if recv_until_confirm == 0 {
+                    recv_until_confirm = RECV_LIMIT;
+
+                     // collect all not confirmed records in a new buffer
+                     let mut not_confirmed: Vec<TransactionSendRecord> = Vec::new();
+
+                     const BATCH_SIZE: usize = 256;
+                     info!(
+                         "break from reading channel, try to confirm {} in {} batches",
+                         to_confirm.len(),
+                         (to_confirm.len() / BATCH_SIZE) + if to_confirm.len() % BATCH_SIZE > 0 { 1 } else { 0 }
+                     );
+                     for batch in to_confirm.rchunks(BATCH_SIZE) {
+                         match rpc_client
+                             .get_signature_statuses(&batch.iter().map(|t| t.signature).collect::<Vec<_>>())
+                         {
+                             Ok(statuses) => {
+                                 trace!("batch result {:?}", statuses);
+                                 for (i, s) in statuses.value.iter().enumerate() {
+                                     let tx_record = &batch[i];
+                                     match s {
+                                         Some(s) => {
+                                             if s.confirmation_status.is_none() {
+                                                 not_confirmed.push(tx_record.clone());
+                                             } else {
+                                                 let mut lock = confirmed.write().unwrap();
+                                                 (*lock).push(TransactionConfirmRecord {
+                                                     signature: tx_record.signature,
+                                                     slot: s.slot,
+                                                     sent_at: tx_record.sent_at,
+                                                     confirmed_at: tx_record.sent_at.elapsed(),
+                                                 });
+
+                                                 debug!(
+                                                     "confirmed sig={} duration={:?}",
+                                                     tx_record.signature,
+                                                     tx_record.sent_at.elapsed()
+                                                 );
+                                             }
+                                         }
+                                         None => {
+                                             if tx_record.sent_at.elapsed().as_secs() > TIMEOUT {
+                                                 debug!(
+                                                     "could not confirm tx {} within {} seconds, dropping it",
+                                                     tx_record.signature, TIMEOUT
+                                                 );
+                                             } else {
+                                                 not_confirmed.push(tx_record.clone());
+                                             }
+                                         }
+                                     }
+                                 }
+                             }
+                             Err(err) => {
+                                 error!("could not confirm signatures err={}", err);
+                                 not_confirmed.extend_from_slice(batch);
+                                 sleep(Duration::from_millis(500));
+                             }
+                         }
+                    }
+
+                }
+
                 match tx_record_rx.try_recv() {
                     Ok(tx_record) => {
                         debug!("add to queue len={} sig={}", to_confirm.len()+1, tx_record.signature);
                         to_confirm.push(tx_record);
+                        recv_until_confirm -= 1;
 
                     }
                     Err(TryRecvError::Empty) => {
                         // collect all not confirmed records in a new buffer
                         let mut not_confirmed: Vec<TransactionSendRecord> = Vec::new();
 
-                        const BATCH_SIZE: usize = 32;
-                        debug!(
-                            "empty channel, try to confirm in {} batches",
+                        const BATCH_SIZE: usize = 256;
+                        info!(
+                            "empty channel, try to confirm {} in {} batches",
+                            to_confirm.len(),
                             (to_confirm.len() / BATCH_SIZE) + if to_confirm.len() % BATCH_SIZE > 0 { 1 } else { 0 }
                         );
                         for batch in to_confirm.rchunks(BATCH_SIZE) {
@@ -419,9 +525,8 @@ fn main() {
                                                 }
                                             }
                                             None => {
-                                                const TIMEOUT: u64 = 30;
                                                 if tx_record.sent_at.elapsed().as_secs() > TIMEOUT {
-                                                    warn!(
+                                                    debug!(
                                                         "could not confirm tx {} within {} seconds, dropping it",
                                                         tx_record.signature, TIMEOUT
                                                     );
@@ -446,14 +551,14 @@ fn main() {
                         to_confirm = not_confirmed;
                     }
                     Err(TryRecvError::Disconnected) => {
-                        debug!("disconnected");
                         if to_confirm.len() > 0 {
                             // collect all not confirmed records in a new buffer
                             let mut not_confirmed: Vec<TransactionSendRecord> = Vec::new();
 
-                            const BATCH_SIZE: usize = 32;
-                            debug!(
-                                "disconnected channel, try to confirm in {} batches",
+                            const BATCH_SIZE: usize = 256;
+                            info!(
+                                "disconnected channel, try to confirm {} in {} batches",
+                                to_confirm.len(),
                                 (to_confirm.len() / BATCH_SIZE) + if to_confirm.len() % BATCH_SIZE > 0 { 1 } else { 0 }
                             );
                             for batch in to_confirm.rchunks(BATCH_SIZE) {
@@ -485,9 +590,8 @@ fn main() {
                                                     }
                                                 }
                                                 None => {
-                                                    const TIMEOUT: u64 = 30;
                                                     if tx_record.sent_at.elapsed().as_secs() > TIMEOUT {
-                                                        warn!(
+                                                        debug!(
                                                             "could not confirm tx {} within {} seconds, dropping it",
                                                             tx_record.signature, TIMEOUT
                                                         );
@@ -524,8 +628,8 @@ fn main() {
                 let lock = confirmed.write().unwrap();
                 (*lock).clone()
             };
-            let total_signed = account_keys_parsed.len() as u64 * duration.as_secs() * 2;
-            info!("confirmed {} signatures of {} rate {}%", confirmed.len(), total_signed, (confirmed.len() as u64 * 100) / total_signed);
+            let total_signed = account_keys_parsed.len() * perp_market_caches.len() * duration.as_secs() as usize * quotes_per_second as usize;
+            info!("confirmed {} signatures of {} rate {}%", confirmed.len(), total_signed, (confirmed.len() * 100) / total_signed);
 
             let mut confirmation_times = confirmed.iter().map(|r| r.confirmed_at.as_millis()).collect::<Vec<_>>();
             confirmation_times.sort();

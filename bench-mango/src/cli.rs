@@ -13,7 +13,7 @@ pub struct Config {
     pub websocket_url: String,
     pub id: Keypair,
     pub duration: Duration,
-    pub thread_batch_sleep_ms: usize,
+    pub quotes_per_second: u64,
     pub account_keys: String,
     pub mango_keys: String,
 }
@@ -26,7 +26,7 @@ impl Default for Config {
             websocket_url: ConfigInput::default().websocket_url,
             id: Keypair::new(),
             duration: Duration::new(std::u64::MAX, 0),
-            thread_batch_sleep_ms: 1,
+            quotes_per_second: 1,
             account_keys: String::new(),
             mango_keys: String::new(),
         }
@@ -94,10 +94,19 @@ pub fn build_args<'a, 'b>(version: &'b str) -> App<'a, 'b> {
         )
         .arg(
             Arg::with_name("duration")
+                .short("d")
                 .long("duration")
                 .value_name("SECS")
                 .takes_value(true)
                 .help("Seconds to run benchmark, then exit; default is forever"),
+        )
+        .arg(
+            Arg::with_name("qoutes_per_second")
+                .short("q")
+                .long("qoutes_per_second")
+                .value_name("QPS")
+                .takes_value(true)
+                .help("Number of quotes per second"),
         )
         .arg(
             Arg::with_name("account_keys")
@@ -168,6 +177,10 @@ pub fn extract_args(matches: &ArgMatches) -> Config {
             duration.to_string().parse().expect("can't parse duration"),
             0,
         );
+    }
+
+    if let Some(qps) = matches.value_of("qoutes_per_second") {
+        args.quotes_per_second = qps.parse().expect("can't parse qoutes_per_second");
     }
 
     args.account_keys = matches.value_of("account_keys").unwrap().to_string();
