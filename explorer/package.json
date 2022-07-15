@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "dependencies": {
-    "@blockworks-foundation/mango-client": "^3.2.16",
+    "@blockworks-foundation/mango-client": "git@github.com:blockworks-foundation/mango-client-v3.git#pan/delisted-config",
+    "@popperjs/core": "^2.10.2",
     "@bonfida/bot": "^0.5.3",
     "@bonfida/spl-name-service": "^0.1.30",
     "@cloudflare/stream-react": "^1.2.0",

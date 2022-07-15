@@ -1,4 +1,5 @@
 import {
+  BN,
   Config,
   GroupConfig,
   MangoInstructionLayout,
@@ -6,6 +7,8 @@ import {
   PerpMarketConfig,
   PerpMarketLayout,
   SpotMarketConfig,
+  getPerpMarketConfig,
+  getSpotMarketConfig,
 } from "@blockworks-foundation/mango-client";
 import { Market } from "@project-serum/serum";
 import {
@@ -340,12 +343,9 @@ export function getSpotMarketFromInstruction(
   if (groupConfig === undefined) {
     return;
   }
-  const spotMarketConfigs = groupConfig.spotMarkets.filter((mangoSpotMarket) =>
+  return getSpotMarketConfig(groupConfig, (mangoSpotMarket: any) =>
     spotMarket.pubkey.equals(mangoSpotMarket.publicKey)
   );
-  if (spotMarketConfigs.length) {
-    return spotMarketConfigs[0];
-  }
 }
 
 export async function getSpotMarketFromSpotMarketConfig(
@@ -374,21 +374,18 @@ export function getPerpMarketFromInstruction(
   if (groupConfig === undefined) {
     return;
   }
-  const perpMarketConfigs = groupConfig.perpMarkets.filter((mangoPerpMarket) =>
+  return getPerpMarketConfig(groupConfig, (mangoPerpMarket: any) =>
     perpMarket.pubkey.equals(mangoPerpMarket.publicKey)
   );
-  if (perpMarketConfigs.length) {
-    return perpMarketConfigs[0];
-  }
 }
 
 export async function getPerpMarketFromPerpMarketConfig(
   clusterUrl: string,
   mangoPerpMarketConfig: PerpMarketConfig
-): Promise<PerpMarket> {
+): Promise<PerpMarket | undefined> {
   const acc = await getAccountInfo(clusterUrl, mangoPerpMarketConfig.publicKey);
+  if(!acc) return undefined;
   const decoded = PerpMarketLayout.decode(acc?.data);
-
   return new PerpMarket(
     mangoPerpMarketConfig.publicKey,
     mangoPerpMarketConfig.baseDecimals,
@@ -397,19 +394,20 @@ export async function getPerpMarketFromPerpMarketConfig(
   );
 }
 
-export function spotMarketFromIndex(
-  ix: TransactionInstruction,
-  marketIndex: number
-): String | undefined {
-  const groupConfig = findGroupConfig(ix.programId);
-  if (groupConfig === undefined) {
-    return;
-  }
-  const spotMarketConfigs = groupConfig.spotMarkets.filter(
-    (spotMarketConfig) => spotMarketConfig.marketIndex === marketIndex
-  );
-  if (!spotMarketConfigs.length) {
-    return "UNKNOWN";
-  }
-  return spotMarketConfigs[0].name;
+export function priceLotsToNumber(price: BN, baseLotSize: number, quoteLotSize: number, baseDecimals: number, quoteDecimals: number): number {
+  const priceLotsToUiConvertor = new BN(10)
+    .pow(new BN(baseDecimals - quoteDecimals))
+    .mul(new BN(quoteLotSize))
+    .div(new BN(baseLotSize))
+    .toNumber();
+
+   
+  return parseFloat(price.toString()) * priceLotsToUiConvertor;
+}
+
+export function baseLotsToNumber(quantity: BN, baseLotSize: number, baseDecimals: number): number {
+  const baseLotsToUiConvertor = new BN(baseLotSize)
+  .div(new BN(10).pow(new BN(baseDecimals)))
+  .toNumber();
+  return parseFloat(quantity.toString()) * baseLotsToUiConvertor;
 }

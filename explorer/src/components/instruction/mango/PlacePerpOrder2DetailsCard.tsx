@@ -5,10 +5,12 @@ import { useCluster } from "providers/cluster";
 import { useEffect, useState } from "react";
 import { InstructionCard } from "../InstructionCard";
 import {
+  baseLotsToNumber,
   getPerpMarketFromInstruction,
   getPerpMarketFromPerpMarketConfig,
   OrderLotDetails,
   PlacePerpOrder2,
+  priceLotsToNumber,
 } from "./types";
 
 export function PlacePerpOrder2DetailsCard(props: {
@@ -39,12 +41,32 @@ export function PlacePerpOrder2DetailsCard(props: {
         cluster.url,
         mangoPerpMarketConfig
       );
-      const maxBaseQuantity = mangoPerpMarket.baseLotsToNumber(
-        new BN(info.maxBaseQuantity.toString())
-      );
-      const limitPrice = mangoPerpMarket.priceLotsToNumber(
-        new BN(info.price.toString())
-      );
+
+      let limitPrice = 0;
+      let maxBaseQuantity = 0;
+
+      const quantity = new BN(info.maxBaseQuantity.toString());
+      const price = new BN(info.price.toString());
+
+      if (mangoPerpMarket) {
+        maxBaseQuantity = mangoPerpMarket.baseLotsToNumber(quantity);
+        limitPrice = mangoPerpMarket.priceLotsToNumber(price);
+      } else {
+        // Market has been delisted, fetch hardcoded info from config
+        const delistedConfig = mangoPerpMarketConfig as any;
+        maxBaseQuantity = baseLotsToNumber(
+          quantity,
+          delistedConfig["baseLotSize"],
+          delistedConfig["baseDecimals"]
+        );
+        limitPrice = priceLotsToNumber(
+          price,
+          delistedConfig["baseLotSize"],
+          delistedConfig["quoteLotSize"],
+          delistedConfig["baseDecimals"],
+          delistedConfig["quoteDecimals"]
+        );
+      }
       setOrderLotDetails({
         price: limitPrice,
         size: maxBaseQuantity,

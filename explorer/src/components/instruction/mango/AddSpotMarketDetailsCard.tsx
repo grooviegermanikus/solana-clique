@@ -1,6 +1,6 @@
 import { SignatureResult, TransactionInstruction } from "@solana/web3.js";
 import { InstructionCard } from "../InstructionCard";
-import { AddSpotMarket, spotMarketFromIndex } from "./types";
+import { AddSpotMarket, getSpotMarketFromInstruction } from "./types";
 
 export function AddSpotMarketDetailsCard(props: {
   ix: TransactionInstruction;
@@ -11,7 +11,8 @@ export function AddSpotMarketDetailsCard(props: {
   childIndex?: number;
 }) {
   const { ix, index, result, info, innerCards, childIndex } = props;
-
+  const spotMarketAccountMeta = ix.keys[2];
+  const spotMarketConfig = getSpotMarketFromInstruction(ix, spotMarketAccountMeta);
   return (
     <InstructionCard
       ix={ix}
@@ -21,11 +22,11 @@ export function AddSpotMarketDetailsCard(props: {
       innerCards={innerCards}
       childIndex={childIndex}
     >
-      {spotMarketFromIndex(ix, info.marketIndex) !== "UNKNOWN" && (
+      {spotMarketConfig && (
         <tr>
           <td>Market</td>
           <td className="text-lg-end">
-            {spotMarketFromIndex(ix, info.marketIndex)}
+            {spotMarketConfig.name}
           </td>
         </tr>
       )}

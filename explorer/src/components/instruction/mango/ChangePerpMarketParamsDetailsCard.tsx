@@ -39,6 +39,8 @@ export function ChangePerpMarketParamsDetailsCard(props: {
         mangoPerpMarketConfig
       );
 
+      if (mangoPerpMarket === undefined) return;
+
       setTargetPeriodLength(
         mangoPerpMarket.liquidityMiningInfo.targetPeriodLength.toNumber()
       );
