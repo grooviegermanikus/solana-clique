@@ -4,7 +4,6 @@ use mango::{
     instruction::{cancel_all_perp_orders, place_perp_order2},
     matching::Side,
     state::{MangoCache, MangoGroup, PerpMarket, QUOTE_INDEX},
-    utils::pk_from_str_like,
 };
 use mango_common::Loadable;
 use rand::prelude::*;
@@ -115,27 +114,29 @@ fn poll_blockhash(
     let mut last_error_log = Instant::now();
     loop {
         let old_blockhash = *blockhash.read().unwrap();
+        if exit_signal.load(Ordering::Relaxed) {
+            break;
+        }
+        
         if let Some(new_blockhash) = get_new_latest_blockhash(client, &old_blockhash) {
             *blockhash.write().unwrap() = new_blockhash;
             blockhash_last_updated = Instant::now();
         } else {
-            if blockhash_last_updated.elapsed().as_secs() > 120 {
-                eprintln!("Blockhash is stuck");
-                exit(1)
-            } else if blockhash_last_updated.elapsed().as_secs() > 30
-                && last_error_log.elapsed().as_secs() >= 1
-            {
-                last_error_log = Instant::now();
-                error!("Blockhash is not updating");
+            if blockhash_last_updated.elapsed().as_secs() > 120{
+                break;
             }
-        }
-
-        if exit_signal.load(Ordering::Relaxed) {
-            break;
         }
 
         sleep(Duration::from_millis(50));
     }
+}
+
+pub fn pk_from_str(str: &str) -> solana_program::pubkey::Pubkey {
+    return solana_program::pubkey::Pubkey::from_str(str).unwrap();
+}
+
+pub fn pk_from_str_like<T: ToString>(str_like: T) -> solana_program::pubkey::Pubkey {
+    return pk_from_str(&str_like.to_string());
 }
 
 fn main() {
