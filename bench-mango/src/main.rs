@@ -3,12 +3,9 @@ use log::*;
 use mango::{
     instruction::{cancel_all_perp_orders, place_perp_order2},
     matching::Side,
-    state::{MangoCache, MangoGroup, PerpMarket, QUOTE_INDEX},
+    state::{MangoCache, MangoGroup, PerpMarket},
 };
 use mango_common::Loadable;
-use rand::prelude::*;
-
-use serde::{Deserialize, Serialize};
 use serde_json;
 
 use solana_bench_mango::{
@@ -33,15 +30,14 @@ use std::{
     collections::HashMap,
     fs,
     ops::{Div, Mul},
-    process::exit,
     str::FromStr,
     sync::{
         atomic::{AtomicBool, Ordering},
-        mpsc::{channel, TryRecvError},
+        mpsc::{channel, TryRecvError, Sender},
         Arc, RwLock,
     },
     thread::{sleep, Builder, JoinHandle},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 
 fn load_from_rpc<T: Loadable>(rpc_client: &RpcClient, pk: &Pubkey) -> T {
@@ -108,10 +104,10 @@ fn poll_blockhash(
     exit_signal: &Arc<AtomicBool>,
     blockhash: &Arc<RwLock<Hash>>,
     client: &Arc<RpcClient>,
-    id: &Pubkey,
+    _id: &Pubkey,
 ) {
     let mut blockhash_last_updated = Instant::now();
-    let mut last_error_log = Instant::now();
+    //let mut last_error_log = Instant::now();
     loop {
         let old_blockhash = *blockhash.read().unwrap();
         if exit_signal.load(Ordering::Relaxed) {
@@ -137,6 +133,182 @@ pub fn pk_from_str(str: &str) -> solana_program::pubkey::Pubkey {
 
 pub fn pk_from_str_like<T: ToString>(str_like: T) -> solana_program::pubkey::Pubkey {
     return pk_from_str(&str_like.to_string());
+}
+
+fn send_mm_transactions(
+    quotes_per_second: u64, 
+    perp_market_caches :&Vec<PerpMarketCache>, 
+    tx_record_sx:&Sender<TransactionSendRecord>, 
+    tpu_client : &Arc<TpuClient>,
+    mango_account_pk : Pubkey,
+    mango_account_signer : &Keypair,
+    blockhash: &Arc<RwLock<Hash>>,
+ )
+{
+    // update quotes 2x per second
+    for _ in 1..quotes_per_second {
+        for c in perp_market_caches.iter() {
+
+            let offset = rand::random::<i8>() as i64;
+            let spread = rand::random::<u8>() as i64;
+            debug!(
+                "price:{:?} price_quote_lots:{:?} order_base_lots:{:?} offset:{:?} spread:{:?}",
+                c.price, c.price_quote_lots, c.order_base_lots, offset, spread
+            );
+
+            let cancel_ix: Instruction = serde_json::from_str(
+                &serde_json::to_string(
+                    &cancel_all_perp_orders(
+                        &pk_from_str_like(&c.mango_program_pk),
+                        &pk_from_str_like(&c.mango_group_pk),
+                        &pk_from_str_like(&mango_account_pk),
+                        &(pk_from_str_like(&mango_account_signer.pubkey())),
+                        &(pk_from_str_like(&c.perp_market_pk)),
+                        &c.perp_market.bids,
+                        &c.perp_market.asks,
+                        10,
+                    )
+                    .unwrap(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+            let place_bid_ix: Instruction = serde_json::from_str(
+                &serde_json::to_string(
+                    &place_perp_order2(
+                        &pk_from_str_like(&c.mango_program_pk),
+                        &pk_from_str_like(&c.mango_group_pk),
+                        &pk_from_str_like(&mango_account_pk),
+                        &(pk_from_str_like(&mango_account_signer.pubkey())),
+                        &pk_from_str_like(&c.mango_cache_pk),
+                        &(pk_from_str_like(&c.perp_market_pk)),
+                        &c.perp_market.bids,
+                        &c.perp_market.asks,
+                        &c.perp_market.event_queue,
+                        None,
+                        &[],
+                        Side::Bid,
+                        c.price_quote_lots + offset - spread,
+                        c.order_base_lots,
+                        i64::MAX,
+                        1,
+                        mango::matching::OrderType::Limit,
+                        false,
+                        None,
+                        64,
+                        mango::matching::ExpiryType::Absolute,
+                    )
+                    .unwrap(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+            let place_ask_ix: Instruction = serde_json::from_str(
+                &serde_json::to_string(
+                    &place_perp_order2(
+                        &pk_from_str_like(&c.mango_program_pk),
+                        &pk_from_str_like(&c.mango_group_pk),
+                        &pk_from_str_like(&mango_account_pk),
+                        &(pk_from_str_like(&mango_account_signer.pubkey())),
+                        &pk_from_str_like(&c.mango_cache_pk),
+                        &(pk_from_str_like(&c.perp_market_pk)),
+                        &c.perp_market.bids,
+                        &c.perp_market.asks,
+                        &c.perp_market.event_queue,
+                        None,
+                        &[],
+                        Side::Ask,
+                        c.price_quote_lots + offset + spread,
+                        c.order_base_lots,
+                        i64::MAX,
+                        2,
+                        mango::matching::OrderType::Limit,
+                        false,
+                        None,
+                        64,
+                        mango::matching::ExpiryType::Absolute,
+                    )
+                    .unwrap(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+            let mut tx = Transaction::new_unsigned(Message::new(
+                &[cancel_ix, place_bid_ix, place_ask_ix],
+                Some(&mango_account_signer.pubkey()),
+            ));
+
+            if let Ok(recent_blockhash) = blockhash.read() {
+                tx.sign(&[mango_account_signer], *recent_blockhash);
+            }
+            
+            tpu_client.send_transaction(&tx);
+            tx_record_sx
+                .send(TransactionSendRecord {
+                    signature: tx.signatures[0],
+                    sent_at: Instant::now(),
+                })
+                .unwrap();
+        }
+    }
+}
+
+fn process_signature_confirmation_batch(
+    rpc_client: &RpcClient,
+    batch : &[TransactionSendRecord],
+    not_confirmed : &Arc<RwLock<Vec<TransactionSendRecord>>>,
+    confirmed: &Arc<RwLock<Vec<TransactionConfirmRecord>>>,
+    timeout : u64,
+)
+{
+    match rpc_client.get_signature_statuses(&batch.iter().map(|t| t.signature).collect::<Vec<_>>())
+    {
+        Ok(statuses) => {
+            trace!("batch result {:?}", statuses);
+            for (i, s) in statuses.value.iter().enumerate() {
+                let tx_record = &batch[i];
+                match s {
+                    Some(s) => {
+                        if s.confirmation_status.is_none() {
+                            not_confirmed.write().unwrap().push(tx_record.clone());
+                        } else {
+                            let mut lock = confirmed.write().unwrap();
+                            (*lock).push(TransactionConfirmRecord {
+                                signature: tx_record.signature,
+                                slot: s.slot,
+                                sent_at: tx_record.sent_at,
+                                confirmed_at: tx_record.sent_at.elapsed(),
+                            });
+
+                            debug!(
+                                "confirmed sig={} duration={:?}",
+                                tx_record.signature,
+                                tx_record.sent_at.elapsed()
+                            );
+                        }
+                    }
+                    None => {
+                        if tx_record.sent_at.elapsed().as_secs() > timeout {
+                            debug!(
+                                "could not confirm tx {} within {} seconds, dropping it",
+                                tx_record.signature, timeout
+                            );
+                        } else {
+                            not_confirmed.write().unwrap().push(tx_record.clone());
+                        }
+                    }
+                }
+            }
+        }
+        Err(err) => {
+            error!("could not confirm signatures err={}", err);
+            not_confirmed.write().unwrap().extend_from_slice(batch);
+            sleep(Duration::from_millis(500));
+        }
+    }
 }
 
 fn main() {
@@ -264,12 +436,11 @@ fn main() {
     let mm_threads: Vec<JoinHandle<()>> = account_keys_parsed
         .iter()
         .map(|account_keys| {
-            let exit_signal = exit_signal.clone();
+            let _exit_signal = exit_signal.clone();
             let tpu_client = tpu_client.clone();
             let blockhash = blockhash.clone();
             let duration = duration.clone();
             let quotes_per_second = quotes_per_second.clone();
-            let tx_record_sx = tx_record_sx.clone();
             let perp_market_caches = perp_market_caches.clone();
             let mango_account_pk =
                 Pubkey::from_str(account_keys.mango_account_pks[0].as_str()).unwrap();
@@ -281,125 +452,35 @@ fn main() {
                 mango_account_signer.pubkey(),
                 mango_account_pk
             );
+            
+            let tx_record_sx = tx_record_sx.clone();
+            let tpu_client = tpu_client.clone();
+            let blockhash = blockhash.clone();
 
             Builder::new()
                 .name("solana-client-sender".to_string())
-                .spawn(move || {
-                    // update quotes 2x per second
-                    for _ in 1..(duration.as_secs() * quotes_per_second) {
-                        for c in perp_market_caches.iter() {
+                .spawn( move || {
+                    for _i in 0..duration.as_secs() {
+                        let start = Instant::now();
+                        // send market maker transactions
+                        send_mm_transactions(quotes_per_second, 
+                            &perp_market_caches, 
+                            &tx_record_sx, 
+                            &tpu_client, 
+                            mango_account_pk, 
+                            &mango_account_signer,
+                            &blockhash,
+                        );
 
-                            let offset = rand::random::<i8>() as i64;
-                            let spread = rand::random::<u8>() as i64;
-                            debug!(
-                                "price:{:?} price_quote_lots:{:?} order_base_lots:{:?} offset:{:?} spread:{:?}",
-                                c.price, c.price_quote_lots, c.order_base_lots, offset, spread
-                            );
-    
-                            let cancel_ix: Instruction = serde_json::from_str(
-                                &serde_json::to_string(
-                                    &cancel_all_perp_orders(
-                                        &pk_from_str_like(&c.mango_program_pk),
-                                        &pk_from_str_like(&c.mango_group_pk),
-                                        &pk_from_str_like(&mango_account_pk),
-                                        &(pk_from_str_like(&mango_account_signer.pubkey())),
-                                        &(pk_from_str_like(&c.perp_market_pk)),
-                                        &c.perp_market.bids,
-                                        &c.perp_market.asks,
-                                        10,
-                                    )
-                                    .unwrap(),
-                                )
-                                .unwrap(),
-                            )
-                            .unwrap();
-    
-                            let place_bid_ix: Instruction = serde_json::from_str(
-                                &serde_json::to_string(
-                                    &place_perp_order2(
-                                        &pk_from_str_like(&c.mango_program_pk),
-                                        &pk_from_str_like(&c.mango_group_pk),
-                                        &pk_from_str_like(&mango_account_pk),
-                                        &(pk_from_str_like(&mango_account_signer.pubkey())),
-                                        &pk_from_str_like(&c.mango_cache_pk),
-                                        &(pk_from_str_like(&c.perp_market_pk)),
-                                        &c.perp_market.bids,
-                                        &c.perp_market.asks,
-                                        &c.perp_market.event_queue,
-                                        None,
-                                        &[],
-                                        Side::Bid,
-                                        c.price_quote_lots + offset - spread,
-                                        c.order_base_lots,
-                                        i64::MAX,
-                                        1,
-                                        mango::matching::OrderType::Limit,
-                                        false,
-                                        None,
-                                        64,
-                                        mango::matching::ExpiryType::Absolute,
-                                    )
-                                    .unwrap(),
-                                )
-                                .unwrap(),
-                            )
-                            .unwrap();
-    
-                            let place_ask_ix: Instruction = serde_json::from_str(
-                                &serde_json::to_string(
-                                    &place_perp_order2(
-                                        &pk_from_str_like(&c.mango_program_pk),
-                                        &pk_from_str_like(&c.mango_group_pk),
-                                        &pk_from_str_like(&mango_account_pk),
-                                        &(pk_from_str_like(&mango_account_signer.pubkey())),
-                                        &pk_from_str_like(&c.mango_cache_pk),
-                                        &(pk_from_str_like(&c.perp_market_pk)),
-                                        &c.perp_market.bids,
-                                        &c.perp_market.asks,
-                                        &c.perp_market.event_queue,
-                                        None,
-                                        &[],
-                                        Side::Ask,
-                                        c.price_quote_lots + offset + spread,
-                                        c.order_base_lots,
-                                        i64::MAX,
-                                        2,
-                                        mango::matching::OrderType::Limit,
-                                        false,
-                                        None,
-                                        64,
-                                        mango::matching::ExpiryType::Absolute,
-                                    )
-                                    .unwrap(),
-                                )
-                                .unwrap(),
-                            )
-                            .unwrap();
-    
-                            let mut tx = Transaction::new_unsigned(Message::new(
-                                &[cancel_ix, place_bid_ix, place_ask_ix],
-                                Some(&mango_account_signer.pubkey()),
-                            ));
-    
-                            if let Ok(recent_blockhash) = blockhash.read() {
-                                tx.sign(&[&mango_account_signer], *recent_blockhash);
-                            }
-    
-                            tx_record_sx
-                                .send(TransactionSendRecord {
-                                    signature: tx.signatures[0],
-                                    sent_at: Instant::now(),
-                                })
-                                .unwrap();
-    
-                            tpu_client.send_transaction(&tx);
+                        let elapsed_millis : u64 = start.elapsed().as_millis() as u64;
+                        if elapsed_millis < 950 { // 50 ms is reserved for other stuff
+                            sleep(Duration::from_millis(950-elapsed_millis));
                         }
-
-
-                        sleep(Duration::from_millis(1000 / quotes_per_second));
+                        else {
+                            warn!("time taken to send transactions is greater than 1000ms {}", elapsed_millis);
+                        }
                     }
-                })
-                .unwrap()
+                }).unwrap()
         })
         .collect();
 
@@ -408,219 +489,80 @@ fn main() {
     let duration = duration.clone();
     let quotes_per_second = quotes_per_second.clone();
     let account_keys_parsed = account_keys_parsed.clone();
+
     let confirmation_thread = Builder::new()
         .name("solana-client-sender".to_string())
         .spawn(move || {
-            let mut to_confirm: Vec<TransactionSendRecord> = Vec::new();
-
             const TIMEOUT: u64 = 30;
-            let RECV_LIMIT = account_keys_parsed.len() * perp_market_caches.len() * 10 * quotes_per_second as usize;
-            let mut recv_until_confirm = RECV_LIMIT;
+            let mut error : bool = false;
+            let recv_limit = account_keys_parsed.len() * perp_market_caches.len() * 10 * quotes_per_second as usize;
+            let mut recv_until_confirm = recv_limit;
+            let not_confirmed: Arc<RwLock<Vec<TransactionSendRecord>>> =  Arc::new(RwLock::new(Vec::new()));
             loop {
-                if recv_until_confirm == 0 {
-                    recv_until_confirm = RECV_LIMIT;
+                if recv_until_confirm == 0 || error {
+                    recv_until_confirm = recv_limit;
 
                      // collect all not confirmed records in a new buffer
-                     let mut not_confirmed: Vec<TransactionSendRecord> = Vec::new();
 
-                     const BATCH_SIZE: usize = 256;
-                     info!(
+                    const BATCH_SIZE: usize = 256;
+                    let to_confirm = {
+                        let mut lock = not_confirmed.write().unwrap();
+                        let to_confirm = (*lock).clone();
+                        (*lock).clear();
+                        to_confirm
+                    };
+
+                    info!(
                          "break from reading channel, try to confirm {} in {} batches",
                          to_confirm.len(),
                          (to_confirm.len() / BATCH_SIZE) + if to_confirm.len() % BATCH_SIZE > 0 { 1 } else { 0 }
-                     );
-                     for batch in to_confirm.rchunks(BATCH_SIZE) {
-                         match rpc_client
-                             .get_signature_statuses(&batch.iter().map(|t| t.signature).collect::<Vec<_>>())
-                         {
-                             Ok(statuses) => {
-                                 trace!("batch result {:?}", statuses);
-                                 for (i, s) in statuses.value.iter().enumerate() {
-                                     let tx_record = &batch[i];
-                                     match s {
-                                         Some(s) => {
-                                             if s.confirmation_status.is_none() {
-                                                 not_confirmed.push(tx_record.clone());
-                                             } else {
-                                                 let mut lock = confirmed.write().unwrap();
-                                                 (*lock).push(TransactionConfirmRecord {
-                                                     signature: tx_record.signature,
-                                                     slot: s.slot,
-                                                     sent_at: tx_record.sent_at,
-                                                     confirmed_at: tx_record.sent_at.elapsed(),
-                                                 });
-
-                                                 debug!(
-                                                     "confirmed sig={} duration={:?}",
-                                                     tx_record.signature,
-                                                     tx_record.sent_at.elapsed()
-                                                 );
-                                             }
-                                         }
-                                         None => {
-                                             if tx_record.sent_at.elapsed().as_secs() > TIMEOUT {
-                                                 debug!(
-                                                     "could not confirm tx {} within {} seconds, dropping it",
-                                                     tx_record.signature, TIMEOUT
-                                                 );
-                                             } else {
-                                                 not_confirmed.push(tx_record.clone());
-                                             }
-                                         }
-                                     }
-                                 }
-                             }
-                             Err(err) => {
-                                 error!("could not confirm signatures err={}", err);
-                                 not_confirmed.extend_from_slice(batch);
-                                 sleep(Duration::from_millis(500));
-                             }
-                         }
+                    );
+                    
+                    // let confirmation_tasks = to_confirm.rchunks(BATCH_SIZE).map(|batch| {
+                    //     Builder::new().name("solana-transaction-confirmation".to_string()).spawn(|| {
+                    //         let rpc_client = rpc_client.clone();
+                    //         let not_confirmed = not_confirmed.clone();
+                    //         let confirmed = confirmed.clone();
+                    //         process_signature_confirmation_batch(&rpc_client, &batch, &not_confirmed, &confirmed, TIMEOUT);
+                    //     })
+                    // }).all(|x| {
+                    //     x.unwrap().join();
+                    //     true
+                    // });
+                    
+                    for batch in to_confirm.rchunks(BATCH_SIZE) {
+                        process_signature_confirmation_batch(&rpc_client, &batch, &not_confirmed, &confirmed, TIMEOUT);
                     }
 
                 }
 
-                match tx_record_rx.try_recv() {
-                    Ok(tx_record) => {
-                        debug!("add to queue len={} sig={}", to_confirm.len()+1, tx_record.signature);
-                        to_confirm.push(tx_record);
-                        recv_until_confirm -= 1;
+                if error {
+                    break;
+                }
 
-                    }
-                    Err(TryRecvError::Empty) => {
-                        // collect all not confirmed records in a new buffer
-                        let mut not_confirmed: Vec<TransactionSendRecord> = Vec::new();
-
-                        const BATCH_SIZE: usize = 256;
-                        info!(
-                            "empty channel, try to confirm {} in {} batches",
-                            to_confirm.len(),
-                            (to_confirm.len() / BATCH_SIZE) + if to_confirm.len() % BATCH_SIZE > 0 { 1 } else { 0 }
-                        );
-                        for batch in to_confirm.rchunks(BATCH_SIZE) {
-                            match rpc_client
-                                .get_signature_statuses(&batch.iter().map(|t| t.signature).collect::<Vec<_>>())
-                            {
-                                Ok(statuses) => {
-                                    trace!("batch result {:?}", statuses);
-                                    for (i, s) in statuses.value.iter().enumerate() {
-                                        let tx_record = &batch[i];
-                                        match s {
-                                            Some(s) => {
-                                                if s.confirmation_status.is_none() {
-                                                    not_confirmed.push(tx_record.clone());
-                                                } else {
-                                                    let mut lock = confirmed.write().unwrap();
-                                                    (*lock).push(TransactionConfirmRecord {
-                                                        signature: tx_record.signature,
-                                                        slot: s.slot,
-                                                        sent_at: tx_record.sent_at,
-                                                        confirmed_at: tx_record.sent_at.elapsed(),
-                                                    });
-
-                                                    debug!(
-                                                        "confirmed sig={} duration={:?}",
-                                                        tx_record.signature,
-                                                        tx_record.sent_at.elapsed()
-                                                    );
-                                                }
-                                            }
-                                            None => {
-                                                if tx_record.sent_at.elapsed().as_secs() > TIMEOUT {
-                                                    debug!(
-                                                        "could not confirm tx {} within {} seconds, dropping it",
-                                                        tx_record.signature, TIMEOUT
-                                                    );
-                                                } else {
-                                                    not_confirmed.push(tx_record.clone());
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                Err(err) => {
-                                    error!("could not confirm signatures err={}", err);
-                                    not_confirmed.extend_from_slice(batch);
-                                    sleep(Duration::from_millis(500));
-                                }
+                // context for writing all the not_confirmed_transactions
+                {
+                    let mut lock = not_confirmed.write().unwrap();
+                    loop 
+                    {
+                        match tx_record_rx.try_recv() {
+                            Ok(tx_record) => {
+                                debug!("add to queue len={} sig={}", (*lock).len()+1, tx_record.signature);
+                                (*lock).push(tx_record);
+                                recv_until_confirm -= 1;
+        
+                            }
+                            Err(TryRecvError::Empty) => {
+                                error = true;
+                                break; // still confirm remaining transctions
+                            }
+                            Err(TryRecvError::Disconnected) => {
+                                error = true;
+                                break; // still confirm remaining transctions
                             }
                         }
-
-                        debug!("tried confirming {} signatures {} remaining", to_confirm.len(), not_confirmed.len());
-
-                        // swap buffers
-                        to_confirm = not_confirmed;
                     }
-                    Err(TryRecvError::Disconnected) => {
-                        if to_confirm.len() > 0 {
-                            // collect all not confirmed records in a new buffer
-                            let mut not_confirmed: Vec<TransactionSendRecord> = Vec::new();
-
-                            const BATCH_SIZE: usize = 256;
-                            info!(
-                                "disconnected channel, try to confirm {} in {} batches",
-                                to_confirm.len(),
-                                (to_confirm.len() / BATCH_SIZE) + if to_confirm.len() % BATCH_SIZE > 0 { 1 } else { 0 }
-                            );
-                            for batch in to_confirm.rchunks(BATCH_SIZE) {
-                                match rpc_client
-                                    .get_signature_statuses(&batch.iter().map(|t| t.signature).collect::<Vec<_>>())
-                                {
-                                    Ok(statuses) => {
-                                        trace!("batch result {:?}", statuses);
-                                        for (i, s) in statuses.value.iter().enumerate() {
-                                            let tx_record = &batch[i];
-                                            match s {
-                                                Some(s) => {
-                                                    if s.confirmation_status.is_none() {
-                                                        not_confirmed.push(tx_record.clone());
-                                                    } else {
-                                                        let mut lock = confirmed.write().unwrap();
-                                                        (*lock).push(TransactionConfirmRecord {
-                                                            signature: tx_record.signature,
-                                                            slot: s.slot,
-                                                            sent_at: tx_record.sent_at,
-                                                            confirmed_at: tx_record.sent_at.elapsed(),
-                                                        });
-    
-                                                        debug!(
-                                                            "confirmed sig={} duration={:?}",
-                                                            tx_record.signature,
-                                                            tx_record.sent_at.elapsed()
-                                                        );
-                                                    }
-                                                }
-                                                None => {
-                                                    if tx_record.sent_at.elapsed().as_secs() > TIMEOUT {
-                                                        debug!(
-                                                            "could not confirm tx {} within {} seconds, dropping it",
-                                                            tx_record.signature, TIMEOUT
-                                                        );
-                                                    } else {
-                                                        not_confirmed.push(tx_record.clone());
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    Err(err) => {
-                                        error!("could not confirm signatures err={}", err);
-                                        not_confirmed.extend_from_slice(batch);
-                                        sleep(Duration::from_millis(500));
-                                    }
-                                }
-                            }
-
-                            debug!("tried confirming {} signatures {} remaining", to_confirm.len(), not_confirmed.len());
-
-                            // swap buffers
-                            to_confirm = not_confirmed;
-                        }
-                        else {
-                            break;
-                        }
-                    }
-                };
+                }
             }
 
 
