@@ -146,7 +146,7 @@ fn send_mm_transactions(
  )
 {
     // update quotes 2x per second
-    for _ in 1..quotes_per_second {
+    for _ in 0..quotes_per_second {
         for c in perp_market_caches.iter() {
 
             let offset = rand::random::<i8>() as i64;
@@ -262,8 +262,10 @@ fn process_signature_confirmation_batch(
     not_confirmed : &Arc<RwLock<Vec<TransactionSendRecord>>>,
     confirmed: &Arc<RwLock<Vec<TransactionConfirmRecord>>>,
     timeout : u64,
-)
+) -> (u64,u64)
 {
+    let mut error : u64 = 0;
+    let mut timeouts : u64 = 0;
     match rpc_client.get_signature_statuses(&batch.iter().map(|t| t.signature).collect::<Vec<_>>())
     {
         Ok(statuses) => {
@@ -272,6 +274,11 @@ fn process_signature_confirmation_batch(
                 let tx_record = &batch[i];
                 match s {
                     Some(s) => {
+                        if s.err.is_some() {
+                            error += 1;
+                            debug!("transaction confirmation {} returned an error {}", tx_record.signature, s.err.as_ref().unwrap().to_string());
+                            continue;
+                        }
                         if s.confirmation_status.is_none() {
                             not_confirmed.write().unwrap().push(tx_record.clone());
                         } else {
@@ -292,6 +299,7 @@ fn process_signature_confirmation_batch(
                     }
                     None => {
                         if tx_record.sent_at.elapsed().as_secs() > timeout {
+                            timeouts += 1;
                             debug!(
                                 "could not confirm tx {} within {} seconds, dropping it",
                                 tx_record.signature, timeout
@@ -309,6 +317,7 @@ fn process_signature_confirmation_batch(
             sleep(Duration::from_millis(500));
         }
     }
+    return (error, timeouts);
 }
 
 fn main() {
@@ -431,7 +440,6 @@ fn main() {
         .collect();
 
     let (tx_record_sx, tx_record_rx) = channel::<TransactionSendRecord>();
-    let tx_records: Arc<RwLock<Vec<TransactionConfirmRecord>>> = Arc::new(RwLock::new(Vec::new()));
 
     let mm_threads: Vec<JoinHandle<()>> = account_keys_parsed
         .iter()
@@ -485,10 +493,10 @@ fn main() {
         .collect();
 
     drop(tx_record_sx);
-    let confirmed = tx_records.clone();
     let duration = duration.clone();
     let quotes_per_second = quotes_per_second.clone();
     let account_keys_parsed = account_keys_parsed.clone();
+    let tx_records: Arc<RwLock<Vec<TransactionConfirmRecord>>> = Arc::new(RwLock::new(Vec::new()));
 
     let confirmation_thread = Builder::new()
         .name("solana-client-sender".to_string())
@@ -498,10 +506,11 @@ fn main() {
             let recv_limit = account_keys_parsed.len() * perp_market_caches.len() * 10 * quotes_per_second as usize;
             let mut recv_until_confirm = recv_limit;
             let not_confirmed: Arc<RwLock<Vec<TransactionSendRecord>>> =  Arc::new(RwLock::new(Vec::new()));
+            let mut error_count: u64 = 0;
+            let mut timeout_count : u64 = 0;
             loop {
-                if recv_until_confirm == 0 || error {
-                    recv_until_confirm = recv_limit;
-
+                let has_signatures_to_confirm = {not_confirmed.read().unwrap().len() > 0};
+                if has_signatures_to_confirm {
                      // collect all not confirmed records in a new buffer
 
                     const BATCH_SIZE: usize = 256;
@@ -517,29 +526,36 @@ fn main() {
                          to_confirm.len(),
                          (to_confirm.len() / BATCH_SIZE) + if to_confirm.len() % BATCH_SIZE > 0 { 1 } else { 0 }
                     );
-                    let mut confirmation_handles = Vec::new();
-                    
-                    for batch in to_confirm.rchunks(BATCH_SIZE).map(|x| x.to_vec()) {
-                        let rpc_client = rpc_client.clone();
-                        let not_confirmed = not_confirmed.clone();
-                        let confirmed = confirmed.clone();
-                        
-                        let join_handle = Builder::new().name("solana-transaction-confirmation".to_string()).spawn(move || {
-                            process_signature_confirmation_batch(&rpc_client, &batch, &not_confirmed, &confirmed, TIMEOUT);
-                        }).unwrap();
-                        confirmation_handles.push(join_handle);
-                    };
-                    for confirmation_handle in confirmation_handles {
-                        confirmation_handle.join();
-                    }
-                    
-                    // for batch in to_confirm.rchunks(BATCH_SIZE) {
-                    //     process_signature_confirmation_batch(&rpc_client, &batch, &not_confirmed, &confirmed, TIMEOUT);
-                    // }
 
+                    let confirmed = tx_records.clone();
+                    for batch in to_confirm.rchunks(BATCH_SIZE).map(|x| x.to_vec()) {
+                        let (errors, timeouts) = process_signature_confirmation_batch(&rpc_client, &batch, &not_confirmed, &confirmed, TIMEOUT);
+                        error_count += errors;
+                        timeout_count += timeouts;
+                    }
+                    // multi threaded implementation of confirming batches
+                    // let mut confirmation_handles = Vec::new();
+                    // for batch in to_confirm.rchunks(BATCH_SIZE).map(|x| x.to_vec()) {
+                    //     let rpc_client = rpc_client.clone();
+                    //     let not_confirmed = not_confirmed.clone();
+                    //     let confirmed = tx_records.clone();
+                        
+                    //     let join_handle = Builder::new().name("solana-transaction-confirmation".to_string()).spawn(move || {
+                    //         process_signature_confirmation_batch(&rpc_client, &batch, &not_confirmed, &confirmed, TIMEOUT)
+                    //     }).unwrap();
+                    //     confirmation_handles.push(join_handle);
+                    // };
+                    // for confirmation_handle in confirmation_handles {
+                    //     let (errors, timeouts) = confirmation_handle.join().unwrap();
+                    //     error_count += errors;
+                    //     timeout_count += timeouts;
+                    // }
+                    sleep(Duration::from_millis(100)); // so the confirmation thread does not spam a lot the rpc node
                 }
-                if (recv_until_confirm == 0 && not_confirmed.read().unwrap().len() == 0) || error {
-                    break;
+                {
+                    if recv_until_confirm == 0 && not_confirmed.read().unwrap().len() == 0 {
+                        break;
+                    }
                 }
                 // context for writing all the not_confirmed_transactions
                 if recv_until_confirm > 0 {
@@ -559,6 +575,9 @@ fn main() {
                                 break; // still confirm remaining transctions
                             }
                             Err(TryRecvError::Disconnected) => {
+                                {
+                                    info!("channel disconnected {}" , recv_until_confirm);
+                                }
                                 debug!("channel disconnected");
                                 error = true;
                                 break; // still confirm remaining transctions
@@ -570,12 +589,14 @@ fn main() {
 
 
             let confirmed: Vec<TransactionConfirmRecord> = {
-                let confirmed = tx_records.clone();
-                let lock = confirmed.write().unwrap();
+                let lock = tx_records.write().unwrap();
                 (*lock).clone()
             };
             let total_signed = account_keys_parsed.len() * perp_market_caches.len() * duration.as_secs() as usize * quotes_per_second as usize;
             info!("confirmed {} signatures of {} rate {}%", confirmed.len(), total_signed, (confirmed.len() * 100) / total_signed);
+            info!("errors counted {} rate {}%", error_count, (error_count as usize * 100) / total_signed);
+            info!("timeouts counted {} rate {}%", timeout_count, (timeout_count as usize * 100) / total_signed);
+
 
             let mut confirmation_times = confirmed.iter().map(|r| r.confirmed_at.as_millis()).collect::<Vec<_>>();
             confirmation_times.sort();
@@ -635,13 +656,15 @@ fn main() {
 
     info!("joined all mm_threads");
 
+    if let Err(err) = confirmation_thread.join() {
+        error!("confirmation join fialed with: {:?}", err);
+    }
+
+    info!("joined confirmation thread");
+
     exit_signal.store(true, Ordering::Relaxed);
 
     if let Err(err) = blockhash_thread.join() {
         error!("blockhash join failed with: {:?}", err);
-    }
-
-    if let Err(err) = confirmation_thread.join() {
-        error!("confirmation join fialed with: {:?}", err);
     }
 }
