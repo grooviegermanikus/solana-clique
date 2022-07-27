@@ -123,7 +123,7 @@ fn poll_blockhash(
             }
         }
 
-        sleep(Duration::from_millis(50));
+        sleep(Duration::from_millis(1000));
     }
 }
 
@@ -258,7 +258,7 @@ fn send_mm_transactions(
 
 fn process_signature_confirmation_batch(
     rpc_client: &RpcClient,
-    batch : &[TransactionSendRecord],
+    batch : &Vec<TransactionSendRecord>,
     not_confirmed : &Arc<RwLock<Vec<TransactionSendRecord>>>,
     confirmed: &Arc<RwLock<Vec<TransactionConfirmRecord>>>,
     timeout : u64,
@@ -517,31 +517,32 @@ fn main() {
                          to_confirm.len(),
                          (to_confirm.len() / BATCH_SIZE) + if to_confirm.len() % BATCH_SIZE > 0 { 1 } else { 0 }
                     );
+                    let mut confirmation_handles = Vec::new();
                     
-                    // let confirmation_tasks = to_confirm.rchunks(BATCH_SIZE).map(|batch| {
-                    //     Builder::new().name("solana-transaction-confirmation".to_string()).spawn(|| {
-                    //         let rpc_client = rpc_client.clone();
-                    //         let not_confirmed = not_confirmed.clone();
-                    //         let confirmed = confirmed.clone();
-                    //         process_signature_confirmation_batch(&rpc_client, &batch, &not_confirmed, &confirmed, TIMEOUT);
-                    //     })
-                    // }).all(|x| {
-                    //     x.unwrap().join();
-                    //     true
-                    // });
-                    
-                    for batch in to_confirm.rchunks(BATCH_SIZE) {
-                        process_signature_confirmation_batch(&rpc_client, &batch, &not_confirmed, &confirmed, TIMEOUT);
+                    for batch in to_confirm.rchunks(BATCH_SIZE).map(|x| x.to_vec()) {
+                        let rpc_client = rpc_client.clone();
+                        let not_confirmed = not_confirmed.clone();
+                        let confirmed = confirmed.clone();
+                        
+                        let join_handle = Builder::new().name("solana-transaction-confirmation".to_string()).spawn(move || {
+                            process_signature_confirmation_batch(&rpc_client, &batch, &not_confirmed, &confirmed, TIMEOUT);
+                        }).unwrap();
+                        confirmation_handles.push(join_handle);
+                    };
+                    for confirmation_handle in confirmation_handles {
+                        confirmation_handle.join();
                     }
+                    
+                    // for batch in to_confirm.rchunks(BATCH_SIZE) {
+                    //     process_signature_confirmation_batch(&rpc_client, &batch, &not_confirmed, &confirmed, TIMEOUT);
+                    // }
 
                 }
-
-                if error {
+                if (recv_until_confirm == 0 && not_confirmed.read().unwrap().len() == 0) || error {
                     break;
                 }
-
                 // context for writing all the not_confirmed_transactions
-                {
+                if recv_until_confirm > 0 {
                     let mut lock = not_confirmed.write().unwrap();
                     loop 
                     {
@@ -553,10 +554,12 @@ fn main() {
         
                             }
                             Err(TryRecvError::Empty) => {
-                                error = true;
+                                debug!("channel emptied");
+                                sleep(Duration::from_millis(100));
                                 break; // still confirm remaining transctions
                             }
                             Err(TryRecvError::Disconnected) => {
+                                debug!("channel disconnected");
                                 error = true;
                                 break; // still confirm remaining transctions
                             }
