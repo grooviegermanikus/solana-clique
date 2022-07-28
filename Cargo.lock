@@ -5095,6 +5095,7 @@ name = "solana-bench-mango"
 version = "1.10.26"
 dependencies = [
  "borsh",
+ "chrono",
  "clap 2.33.3",
  "crossbeam-channel",
  "fixed",
@@ -5123,11 +5124,13 @@ dependencies = [
  "solana-measure",
  "solana-metrics",
  "solana-net-utils",
+ "solana-program 1.9.29",
  "solana-rpc",
  "solana-runtime",
  "solana-sdk 1.10.26",
  "solana-streamer",
  "solana-test-validator",
+ "solana-transaction-status",
  "solana-version",
  "thiserror",
 ]

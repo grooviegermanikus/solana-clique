@@ -310,6 +310,12 @@ impl TpuClient {
     pub fn rpc_client(&self) -> &RpcClient {
         &self.rpc_client
     }
+
+    pub fn estimated_current_slot(&self) -> Slot {
+        self.leader_tpu_service
+            .recent_slots
+            .estimated_current_slot()
+    }
 }
 
 impl Drop for TpuClient {
