@@ -536,7 +536,7 @@ fn main() {
             let mut error: bool = false;
             let recv_limit = account_keys_parsed.len()
                 * perp_market_caches.len()
-                * 10
+                * duration.as_secs() as usize
                 * quotes_per_second as usize;
             let mut recv_until_confirm = recv_limit;
             let not_confirmed: Arc<RwLock<Vec<TransactionSendRecord>>> =
@@ -659,7 +659,7 @@ fn main() {
                 (*lock).clone()
             };
             info!(
-                "timeouts counted {} rate {}",
+                "timeouts counted {} rate {}%",
                 timeouts.len(),
                 (timeouts.len() * 100) / total_signed
             );
@@ -732,6 +732,7 @@ fn main() {
                             .find(|r| r.reward_type == Some(RewardType::Fee))
                             .unwrap()
                             .pubkey;
+
                         println!(
                             "{},{},{:?},{},{}",
                             slot,
