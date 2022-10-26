@@ -2,7 +2,7 @@
 
 Submitting a [transaction](https://docs.solana.com/terminology#transaction) to be executed on the solana blockchain,
 requires the client to identify the next few leaders based on the
-[leader schedule](https://en.wikipedia.org/wiki/QUIC), look up their peering information in gossip and
+[leader schedule](https://docs.solana.com/terminology#leader-schedule), look up their peering information in gossip and
 connect to them via the [quic protocol](https://en.wikipedia.org/wiki/QUIC). In order to simplify the
 process so it can be triggered from a web browser, most applications
 run full [validators](https://docs.solana.com/terminology#validator) that forward the transactions according to the
