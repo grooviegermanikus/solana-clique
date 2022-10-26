@@ -12,15 +12,15 @@ project would be to create a specialized micro-service that allows
 to deploy this logic quickly and allows [horizontal scalability](https://en.wikipedia.org/wiki/Scalability) with
 commodity vms.
 
-## Run
+## Test
 
 *make sure `solana-test-validator` is running in the background*
 ```bash
 $ cd ~ && solana-test-validator 
 ```
 
-*run light-rpc server*
+*run `light-rpc` test*
 ```bash
-$ cargo r
+$ cargo test
 ```
 
