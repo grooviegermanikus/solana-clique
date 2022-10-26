@@ -1,2 +1,2 @@
-mod light_rpc;
-pub use light_rpc::*;
+mod rpc;
+pub use rpc::*;

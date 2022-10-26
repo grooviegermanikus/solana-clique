@@ -23,3 +23,21 @@ impl LightRpc {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::LightRpc;
+
+    const RPC_ADDR: &str = "127.0.0.1:8899";
+    const TPU_ADDR: &str = "127.0.0.1:1027";
+    const CONNECTION_POOL_SIZE: usize = 1;
+
+    #[test]
+    fn initialize_light_rpc() {
+        let _light_rpc = LightRpc::new(
+            RPC_ADDR.parse().unwrap(),
+            TPU_ADDR.parse().unwrap(),
+            CONNECTION_POOL_SIZE,
+        );
+    }
+}
