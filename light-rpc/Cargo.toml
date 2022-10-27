@@ -4,5 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-solana-client = { path = "../client" }
+solana-client={path = "../client"}
+solana-sdk={path = "../sdk"}
 tokio = { version = "1.14.1", features = ["full"]} 
+borsh = "0.9.3"

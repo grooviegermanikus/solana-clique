@@ -2521,7 +2521,9 @@ dependencies = [
 name = "light-rpc"
 version = "0.1.0"
 dependencies = [
+ "borsh",
  "solana-client",
+ "solana-sdk 1.15.0",
  "tokio",
 ]
 

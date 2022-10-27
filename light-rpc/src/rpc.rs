@@ -1,8 +1,17 @@
-use std::net::SocketAddr;
-use std::sync::Arc;
-
-use solana_client::connection_cache::ConnectionCache;
-use solana_client::thin_client::ThinClient;
+use {
+    borsh::{BorshDeserialize, BorshSerialize},
+    solana_client::{connection_cache::ConnectionCache, thin_client::ThinClient},
+    solana_sdk::{
+        client::AsyncClient,
+        instruction::Instruction,
+        message::Message,
+        pubkey::Pubkey,
+        signature::{Signature, Signer},
+        signer::keypair::Keypair,
+        transaction::Transaction,
+    },
+    std::{net::SocketAddr, sync::Arc},
+};
 // use solana_client::tpu_client::TpuSenderError;
 
 // type Result<T> = std::result::Result<T, TpuSenderError>;
@@ -10,6 +19,12 @@ use solana_client::thin_client::ThinClient;
 pub struct LightRpc {
     pub connection_cache: Arc<ConnectionCache>,
     pub thin_client: ThinClient,
+}
+#[derive(BorshSerialize, BorshDeserialize)]
+enum BankInstruction {
+    Initialize,
+    Deposit { lamports: u64 },
+    Withdraw { lamports: u64 },
 }
 
 impl LightRpc {
@@ -22,11 +37,28 @@ impl LightRpc {
             thin_client,
         }
     }
+
+    pub fn forward_transaction(&self, program_id: Pubkey, payer: &Keypair) -> Signature {
+        let bankins = BankInstruction::Initialize;
+        let instruction = Instruction::new_with_borsh(program_id, &bankins, vec![]);
+
+        let message = Message::new(&[instruction], Some(&payer.pubkey()));
+        let blockhash = self
+            .thin_client
+            .rpc_client()
+            .get_latest_blockhash()
+            .unwrap();
+        let tx = Transaction::new(&[payer], message, blockhash);
+        self.thin_client.async_send_transaction(tx).unwrap()
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::LightRpc;
+    use {
+        crate::LightRpc,
+        solana_sdk::{pubkey::Pubkey, signer::keypair::Keypair},
+    };
 
     const RPC_ADDR: &str = "127.0.0.1:8899";
     const TPU_ADDR: &str = "127.0.0.1:1027";
@@ -39,5 +71,17 @@ mod tests {
             TPU_ADDR.parse().unwrap(),
             CONNECTION_POOL_SIZE,
         );
+    }
+    #[test]
+    fn test_forward_transaction() {
+        let _light_rpc = LightRpc::new(
+            RPC_ADDR.parse().unwrap(),
+            TPU_ADDR.parse().unwrap(),
+            CONNECTION_POOL_SIZE,
+        );
+        let program_id = Pubkey::new_unique();
+        let payer = Keypair::new();
+        let x = _light_rpc.forward_transaction(program_id, &payer);
+        println!("{}", x);
     }
 }
