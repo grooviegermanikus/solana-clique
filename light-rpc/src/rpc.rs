@@ -40,7 +40,11 @@ impl LightRpc {
         }
     }
 
-    pub fn forward_transaction(&self, program_id: Pubkey, payer: &Keypair) -> Result<Signature,TransportError> {
+    pub fn forward_transaction(
+        &self,
+        program_id: Pubkey,
+        payer: &Keypair,
+    ) -> Result<Signature, TransportError> {
         let bankins = BankInstruction::Initialize;
         let instruction = Instruction::new_with_borsh(program_id, &bankins, vec![]);
 
@@ -83,7 +87,7 @@ mod tests {
         );
         let program_id = Pubkey::new_unique();
         let payer = Keypair::new();
-        let x = _light_rpc.forward_transaction(program_id, &payer);
+        let x = _light_rpc.forward_transaction(program_id, &payer).unwrap();
         println!("{}", x);
     }
 }
