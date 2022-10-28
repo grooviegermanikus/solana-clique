@@ -1,8 +1,11 @@
-use std::net::SocketAddr;
-use std::sync::Arc;
-
-use solana_client::connection_cache::ConnectionCache;
-use solana_client::thin_client::ThinClient;
+use {
+    solana_client::{connection_cache::ConnectionCache, thin_client::ThinClient},
+    solana_sdk::{
+        client::AsyncClient, signature::Signature, transaction::Transaction,
+        transport::TransportError,
+    },
+    std::{net::SocketAddr, sync::Arc},
+};
 // use solana_client::tpu_client::TpuSenderError;
 
 // type Result<T> = std::result::Result<T, TpuSenderError>;
@@ -22,15 +25,35 @@ impl LightRpc {
             thin_client,
         }
     }
+
+    pub fn forward_transaction(
+        &self,
+        transaction: Transaction,
+    ) -> Result<Signature, TransportError> {
+        self.thin_client.async_send_transaction(transaction)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::LightRpc;
+    use {
+        crate::LightRpc,
+        borsh::{BorshDeserialize, BorshSerialize},
+        solana_sdk::{
+            instruction::Instruction, message::Message, pubkey::Pubkey, signature::Signer,
+            signer::keypair::Keypair, transaction::Transaction,
+        },
+    };
 
     const RPC_ADDR: &str = "127.0.0.1:8899";
     const TPU_ADDR: &str = "127.0.0.1:1027";
     const CONNECTION_POOL_SIZE: usize = 1;
+    #[derive(BorshSerialize, BorshDeserialize)]
+    enum BankInstruction {
+        Initialize,
+        Deposit { lamports: u64 },
+        Withdraw { lamports: u64 },
+    }
 
     #[test]
     fn initialize_light_rpc() {
@@ -39,5 +62,27 @@ mod tests {
             TPU_ADDR.parse().unwrap(),
             CONNECTION_POOL_SIZE,
         );
+    }
+    #[test]
+    fn test_forward_transaction() {
+        let light_rpc = LightRpc::new(
+            RPC_ADDR.parse().unwrap(),
+            TPU_ADDR.parse().unwrap(),
+            CONNECTION_POOL_SIZE,
+        );
+        let program_id = Pubkey::new_unique();
+        let payer = Keypair::new();
+        let bankins = BankInstruction::Initialize;
+        let instruction = Instruction::new_with_borsh(program_id, &bankins, vec![]);
+
+        let message = Message::new(&[instruction], Some(&payer.pubkey()));
+        let blockhash = light_rpc
+            .thin_client
+            .rpc_client()
+            .get_latest_blockhash()
+            .unwrap();
+        let tx = Transaction::new(&[&payer], message, blockhash);
+        let x = light_rpc.forward_transaction(tx).unwrap();
+        println!("{}", x);
     }
 }
