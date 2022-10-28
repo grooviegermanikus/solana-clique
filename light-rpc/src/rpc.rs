@@ -1,5 +1,3 @@
-use solana_sdk::transport::TransportError;
-
 use {
     borsh::{BorshDeserialize, BorshSerialize},
     solana_client::{connection_cache::ConnectionCache, thin_client::ThinClient},
@@ -11,6 +9,7 @@ use {
         signature::{Signature, Signer},
         signer::keypair::Keypair,
         transaction::Transaction,
+        transport::TransportError,
     },
     std::{net::SocketAddr, sync::Arc},
 };
@@ -80,14 +79,14 @@ mod tests {
     }
     #[test]
     fn test_forward_transaction() {
-        let _light_rpc = LightRpc::new(
+        let light_rpc = LightRpc::new(
             RPC_ADDR.parse().unwrap(),
             TPU_ADDR.parse().unwrap(),
             CONNECTION_POOL_SIZE,
         );
         let program_id = Pubkey::new_unique();
         let payer = Keypair::new();
-        let x = _light_rpc.forward_transaction(program_id, &payer).unwrap();
+        let x = light_rpc.forward_transaction(program_id, &payer).unwrap();
         println!("{}", x);
     }
 }
