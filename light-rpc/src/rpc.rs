@@ -1,3 +1,5 @@
+use solana_sdk::transport::TransportError;
+
 use {
     borsh::{BorshDeserialize, BorshSerialize},
     solana_client::{connection_cache::ConnectionCache, thin_client::ThinClient},
@@ -38,7 +40,7 @@ impl LightRpc {
         }
     }
 
-    pub fn forward_transaction(&self, program_id: Pubkey, payer: &Keypair) -> Signature {
+    pub fn forward_transaction(&self, program_id: Pubkey, payer: &Keypair) -> Result<Signature,TransportError> {
         let bankins = BankInstruction::Initialize;
         let instruction = Instruction::new_with_borsh(program_id, &bankins, vec![]);
 
@@ -49,7 +51,7 @@ impl LightRpc {
             .get_latest_blockhash()
             .unwrap();
         let tx = Transaction::new(&[payer], message, blockhash);
-        self.thin_client.async_send_transaction(tx).unwrap()
+        self.thin_client.async_send_transaction(tx)
     }
 }
 
