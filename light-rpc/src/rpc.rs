@@ -1,14 +1,10 @@
-use solana_sdk::commitment_config::CommitmentConfig;
 use solana_client::client_error::ClientError;
 use solana_client::rpc_response::Response;
+use solana_sdk::commitment_config::CommitmentConfig;
 use {
-    solana_client::{
-        connection_cache::ConnectionCache, thin_client::ThinClient,
-    },
+    solana_client::{connection_cache::ConnectionCache, thin_client::ThinClient},
     solana_sdk::{
-        client::AsyncClient,
-        signature::Signature,
-        transaction::Transaction,
+        client::AsyncClient, signature::Signature, transaction::Transaction,
         transport::TransportError,
     },
     std::{net::SocketAddr, sync::Arc},
@@ -40,11 +36,14 @@ impl LightRpc {
         self.thin_client.async_send_transaction(transaction)
     }
 
-    pub fn confirm_transaction(&self, signature: &Signature, commitment_config:CommitmentConfig) -> Result<Response<bool>, ClientError> {
-        self
-            .thin_client
+    pub fn confirm_transaction(
+        &self,
+        signature: &Signature,
+        commitment_config: CommitmentConfig,
+    ) -> Result<Response<bool>, ClientError> {
+        self.thin_client
             .rpc_client()
-            .confirm_transaction_with_commitment(signature,commitment_config)
+            .confirm_transaction_with_commitment(signature, commitment_config)
     }
 }
 
@@ -53,16 +52,14 @@ mod tests {
     use {
         super::*,
         solana_sdk::{
-            native_token::LAMPORTS_PER_SOL, signature::Signer,
-            signer::keypair::Keypair, system_instruction,
-            transaction::Transaction,
-        }
+            native_token::LAMPORTS_PER_SOL, signature::Signer, signer::keypair::Keypair,
+            system_instruction, transaction::Transaction,
+        },
     };
 
     const RPC_ADDR: &str = "127.0.0.1:8899";
     const TPU_ADDR: &str = "127.0.0.1:1027";
     const CONNECTION_POOL_SIZE: usize = 1;
-
 
     #[test]
     fn initialize_light_rpc() {
@@ -91,13 +88,19 @@ mod tests {
             .rpc_client()
             .request_airdrop(&frompubkey, LAMPORTS_PER_SOL)
         {
-            Ok(sig) => loop {
-                let confirmed = light_rpc.confirm_transaction(&sig,CommitmentConfig::confirmed()).unwrap().value;
-                if confirmed {
-                    println!("Request Airdrop Transaction: {} Confirmed",sig);
-                    break;
-                }
-            },
+            Ok(sig) => {
+                loop {
+                    let confirmed = light_rpc
+                        .confirm_transaction(&sig, CommitmentConfig::confirmed())
+                        .unwrap()
+                        .value;
+
+                    if confirmed {
+                        println!("Request Airdrop Transaction: {} Confirmed", sig);
+                        break std::time::Instant::now();
+                    };
+                };
+            }
             Err(_) => println!("Error requesting airdrop"),
         };
         let ix = system_instruction::transfer(&frompubkey, &topubkey, lamports);
@@ -114,12 +117,20 @@ mod tests {
         );
 
         let sig = light_rpc.forward_transaction(txn).unwrap();
-        loop {
-            let confirmed = light_rpc.confirm_transaction(&sig,CommitmentConfig::confirmed()).unwrap().value;
+        let start = std::time::Instant::now();
+        let end = loop {
+            let confirmed = light_rpc
+                .confirm_transaction(&sig, CommitmentConfig::confirmed())
+                .unwrap()
+                .value;
             if confirmed {
-                println!("Transaction: {} Confirmed",sig);
-                break;
+                println!("Transaction: {} Confirmed", sig);
+                break std::time::Instant::now();
             }
-        }
+        };
+        
+        println!("Transaction was sent at: {:?}", start);
+        println!("Transaction was confirmed at: {:?}", end);
+        println!("Time Taken: {:?}", end - start);
     }
 }
