@@ -1,3 +1,6 @@
+use solana_sdk::commitment_config::CommitmentConfig;
+use solana_client::client_error::ClientError;
+use solana_client::rpc_response::Response;
 use {
     solana_client::{
         connection_cache::ConnectionCache, thin_client::ThinClient,
@@ -37,13 +40,11 @@ impl LightRpc {
         self.thin_client.async_send_transaction(transaction)
     }
 
-    pub fn confirm_transaction(&self, signature: &Signature) -> bool {
-        let x = self
+    pub fn confirm_transaction(&self, signature: &Signature, commitment_config:CommitmentConfig) -> Result<Response<bool>, ClientError> {
+        self
             .thin_client
             .rpc_client()
-            .confirm_transaction(signature)
-            .unwrap();
-        x
+            .confirm_transaction_with_commitment(signature,commitment_config)
     }
 }
 
@@ -91,7 +92,7 @@ mod tests {
             .request_airdrop(&frompubkey, LAMPORTS_PER_SOL)
         {
             Ok(sig) => loop {
-                let confirmed = light_rpc.confirm_transaction(&sig);
+                let confirmed = light_rpc.confirm_transaction(&sig,CommitmentConfig::confirmed()).unwrap().value;
                 if confirmed {
                     println!("Request Airdrop Transaction: {} Confirmed",sig);
                     break;
@@ -114,7 +115,7 @@ mod tests {
 
         let sig = light_rpc.forward_transaction(txn).unwrap();
         loop {
-            let confirmed = light_rpc.confirm_transaction(&sig);
+            let confirmed = light_rpc.confirm_transaction(&sig,CommitmentConfig::confirmed()).unwrap().value;
             if confirmed {
                 println!("Transaction: {} Confirmed",sig);
                 break;
