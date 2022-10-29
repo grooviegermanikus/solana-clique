@@ -6,8 +6,10 @@ use {
     },
     std::{net::SocketAddr, sync::Arc},
 };
+
 use solana_client::client_error::ClientError;
 use solana_sdk::commitment_config::{self, CommitmentConfig};
+use tokio::time::Sleep;
 // use solana_client::tpu_client::TpuSenderError;
 
 // type Result<T> = std::result::Result<T, TpuSenderError>;
@@ -34,15 +36,23 @@ impl LightRpc {
     ) -> Result<Signature, TransportError> {
         self.thin_client.async_send_transaction(transaction)
     }
-    
-    pub fn confirm_transaction(&self,signature:&Signature)->bool{
-       let x= self.thin_client.rpc_client().confirm_transaction(signature).unwrap();
-       return x
+
+    pub fn confirm_transaction(&self, signature: &Signature) -> bool {
+        let x = self
+            .thin_client
+            .rpc_client()
+            .confirm_transaction(signature)
+            .unwrap();
+        x
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::thread::sleep;
+    use std::time::Duration;
+
+    use solana_sdk::{client::SyncClient, system_transaction};
     use {
         crate::LightRpc,
         borsh::{BorshDeserialize, BorshSerialize},
@@ -90,15 +100,28 @@ mod tests {
             .unwrap();
         let tx = Transaction::new(&[&payer], message, blockhash);
         let x = light_rpc.forward_transaction(tx).unwrap();
-        
-        let confirmation=loop{
-            let confirmation=light_rpc.confirm_transaction(&x);
-            if confirmation{
-                break confirmation;
-            }
-        };
-        
-        println!("{}",confirmation);    
         println!("{}", x);
+    }
+
+    #[test]
+    fn confirm() {
+        let light_rpc = LightRpc::new(
+            RPC_ADDR.parse().unwrap(),
+            TPU_ADDR.parse().unwrap(),
+            CONNECTION_POOL_SIZE,
+        );
+        // Transfer lamports from Alice to Bob and wait for confirmation
+        let latest_blockhash = light_rpc.thin_client.rpc_client().get_latest_blockhash().unwrap();
+       let alice=Keypair::new();
+       let bob=Keypair::new();
+       let lamports=500;
+       let x=light_rpc.thin_client.rpc_client().request_airdrop(&alice.pubkey(), 100000000000000).unwrap();
+              loop {
+            let confirmed = light_rpc.confirm_transaction(&x);
+            if confirmed {
+                break;
+            }
+        } 
+        
     }
 }
