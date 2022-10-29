@@ -37,7 +37,7 @@ impl LightRpc {
     
     pub fn confirm_transaction(&self,signature:&Signature)->bool{
        let x= self.thin_client.rpc_client().confirm_transaction(signature).unwrap();
-       
+       return x
     }
 }
 
