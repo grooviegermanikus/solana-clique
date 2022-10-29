@@ -6,6 +6,8 @@ use {
     },
     std::{net::SocketAddr, sync::Arc},
 };
+use solana_client::client_error::ClientError;
+use solana_sdk::commitment_config::{self, CommitmentConfig};
 // use solana_client::tpu_client::TpuSenderError;
 
 // type Result<T> = std::result::Result<T, TpuSenderError>;
@@ -31,6 +33,11 @@ impl LightRpc {
         transaction: Transaction,
     ) -> Result<Signature, TransportError> {
         self.thin_client.async_send_transaction(transaction)
+    }
+    
+    pub fn confirm_transaction(&self,signature:&Signature)->bool{
+       let x= self.thin_client.rpc_client().confirm_transaction(signature).unwrap();
+       
     }
 }
 
@@ -83,6 +90,15 @@ mod tests {
             .unwrap();
         let tx = Transaction::new(&[&payer], message, blockhash);
         let x = light_rpc.forward_transaction(tx).unwrap();
+        
+        let confirmation=loop{
+            let confirmation=light_rpc.confirm_transaction(&x);
+            if confirmation{
+                break confirmation;
+            }
+        };
+        
+        println!("{}",confirmation);    
         println!("{}", x);
     }
 }
