@@ -1,15 +1,15 @@
 use {
-    solana_client::{connection_cache::ConnectionCache, thin_client::ThinClient},
+    solana_client::{
+        connection_cache::ConnectionCache, thin_client::ThinClient,
+    },
     solana_sdk::{
-        client::AsyncClient, signature::Signature, transaction::Transaction,
+        client::AsyncClient,
+        signature::Signature,
+        transaction::Transaction,
         transport::TransportError,
     },
     std::{net::SocketAddr, sync::Arc},
 };
-
-use solana_client::client_error::ClientError;
-use solana_sdk::commitment_config::{self, CommitmentConfig};
-use tokio::time::Sleep;
 // use solana_client::tpu_client::TpuSenderError;
 
 // type Result<T> = std::result::Result<T, TpuSenderError>;
@@ -49,28 +49,19 @@ impl LightRpc {
 
 #[cfg(test)]
 mod tests {
-    use std::thread::sleep;
-    use std::time::Duration;
-
-    use solana_sdk::{client::SyncClient, system_transaction};
     use {
-        crate::LightRpc,
-        borsh::{BorshDeserialize, BorshSerialize},
+        super::*,
         solana_sdk::{
-            instruction::Instruction, message::Message, pubkey::Pubkey, signature::Signer,
-            signer::keypair::Keypair, transaction::Transaction,
-        },
+            native_token::LAMPORTS_PER_SOL, signature::Signer,
+            signer::keypair::Keypair, system_instruction,
+            transaction::Transaction,
+        }
     };
 
     const RPC_ADDR: &str = "127.0.0.1:8899";
     const TPU_ADDR: &str = "127.0.0.1:1027";
     const CONNECTION_POOL_SIZE: usize = 1;
-    #[derive(BorshSerialize, BorshDeserialize)]
-    enum BankInstruction {
-        Initialize,
-        Deposit { lamports: u64 },
-        Withdraw { lamports: u64 },
-    }
+
 
     #[test]
     fn initialize_light_rpc() {
@@ -81,47 +72,53 @@ mod tests {
         );
     }
     #[test]
-    fn test_forward_transaction() {
+    fn test_forward_transaction_confirm_transaction() {
         let light_rpc = LightRpc::new(
             RPC_ADDR.parse().unwrap(),
             TPU_ADDR.parse().unwrap(),
             CONNECTION_POOL_SIZE,
         );
-        let program_id = Pubkey::new_unique();
-        let payer = Keypair::new();
-        let bankins = BankInstruction::Initialize;
-        let instruction = Instruction::new_with_borsh(program_id, &bankins, vec![]);
+        let alice = Keypair::new();
+        let frompubkey = Signer::pubkey(&alice);
 
-        let message = Message::new(&[instruction], Some(&payer.pubkey()));
-        let blockhash = light_rpc
+        let bob = Keypair::new();
+        let topubkey = Signer::pubkey(&bob);
+
+        let lamports = 1_000_000;
+        match light_rpc
+            .thin_client
+            .rpc_client()
+            .request_airdrop(&frompubkey, LAMPORTS_PER_SOL)
+        {
+            Ok(sig) => loop {
+                let confirmed = light_rpc.confirm_transaction(&sig);
+                if confirmed {
+                    println!("Request Airdrop Transaction: {} Confirmed",sig);
+                    break;
+                }
+            },
+            Err(_) => println!("Error requesting airdrop"),
+        };
+        let ix = system_instruction::transfer(&frompubkey, &topubkey, lamports);
+        let recent_blockhash = light_rpc
             .thin_client
             .rpc_client()
             .get_latest_blockhash()
-            .unwrap();
-        let tx = Transaction::new(&[&payer], message, blockhash);
-        let x = light_rpc.forward_transaction(tx).unwrap();
-        println!("{}", x);
-    }
-
-    #[test]
-    fn confirm() {
-        let light_rpc = LightRpc::new(
-            RPC_ADDR.parse().unwrap(),
-            TPU_ADDR.parse().unwrap(),
-            CONNECTION_POOL_SIZE,
+            .expect("Failed to get latest blockhash.");
+        let txn = Transaction::new_signed_with_payer(
+            &[ix],
+            Some(&frompubkey),
+            &[&alice],
+            recent_blockhash,
         );
-        // Transfer lamports from Alice to Bob and wait for confirmation
-        let latest_blockhash = light_rpc.thin_client.rpc_client().get_latest_blockhash().unwrap();
-       let alice=Keypair::new();
-       let bob=Keypair::new();
-       let lamports=500;
-       let x=light_rpc.thin_client.rpc_client().request_airdrop(&alice.pubkey(), 100000000000000).unwrap();
-              loop {
-            let confirmed = light_rpc.confirm_transaction(&x);
+
+        let sig = light_rpc.forward_transaction(txn).unwrap();
+        loop {
+            let confirmed = light_rpc.confirm_transaction(&sig);
             if confirmed {
+                println!("Transaction: {} Confirmed",sig);
                 break;
             }
-        } 
-        
+        }
     }
 }
