@@ -52,8 +52,8 @@ mod tests {
     use {
         super::*,
         solana_sdk::{
-            native_token::LAMPORTS_PER_SOL, signature::Signer,
-            signer::keypair::Keypair, system_instruction, transaction::Transaction,
+            native_token::LAMPORTS_PER_SOL, signature::Signer, signer::keypair::Keypair,
+            system_instruction, transaction::Transaction,
         },
         std::{thread, time::Duration},
     };

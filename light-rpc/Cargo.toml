@@ -8,7 +8,9 @@ solana-client={path = "../client"}
 solana-sdk={path = "../sdk"}
 tokio = { version = "1.14.1", features = ["full"]}
 csv = "1.1.6"
-serde = "1.0.147"
+serde = { version = "1", features = ["derive"]}
+
+[dev-dependencies]
 bencher = "0.1.5"
 
 [[bench]]
