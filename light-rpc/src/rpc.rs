@@ -1,11 +1,11 @@
-use solana_client::client_error::ClientError;
-use solana_client::rpc_response::Response;
-use solana_sdk::commitment_config::CommitmentConfig;
 use {
-    solana_client::{connection_cache::ConnectionCache, thin_client::ThinClient},
+    solana_client::{
+        client_error::ClientError, connection_cache::ConnectionCache, rpc_response::Response,
+        thin_client::ThinClient,
+    },
     solana_sdk::{
-        client::AsyncClient, signature::Signature, transaction::Transaction,
-        transport::TransportError,
+        client::AsyncClient, commitment_config::CommitmentConfig, signature::Signature,
+        transaction::Transaction, transport::TransportError,
     },
     std::{net::SocketAddr, sync::Arc},
 };
@@ -99,7 +99,7 @@ mod tests {
                         println!("Request Airdrop Transaction: {} Confirmed", sig);
                         break std::time::Instant::now();
                     };
-                };
+                }
             }
             Err(_) => println!("Error requesting airdrop"),
         };
@@ -128,7 +128,7 @@ mod tests {
                 break std::time::Instant::now();
             }
         };
-        
+
         println!("Transaction was sent at: {:?}", start);
         println!("Transaction was confirmed at: {:?}", end);
         println!("Time Taken: {:?}", end - start);
