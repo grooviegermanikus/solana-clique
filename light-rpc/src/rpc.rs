@@ -52,9 +52,10 @@ mod tests {
     use {
         super::*,
         solana_sdk::{
-            native_token::LAMPORTS_PER_SOL, signature::Signer, signer::keypair::Keypair,
-            system_instruction, transaction::Transaction,
+            native_token::LAMPORTS_PER_SOL, signature::Signer,
+            signer::keypair::Keypair, system_instruction, transaction::Transaction,
         },
+        std::{thread, time::Duration},
     };
 
     const RPC_ADDR: &str = "127.0.0.1:8899";
@@ -69,40 +70,27 @@ mod tests {
             CONNECTION_POOL_SIZE,
         );
     }
-    #[test]
-    fn test_forward_transaction_confirm_transaction() {
-        let light_rpc = LightRpc::new(
-            RPC_ADDR.parse().unwrap(),
-            TPU_ADDR.parse().unwrap(),
-            CONNECTION_POOL_SIZE,
-        );
-        let alice = Keypair::new();
-        let frompubkey = Signer::pubkey(&alice);
 
-        let bob = Keypair::new();
-        let topubkey = Signer::pubkey(&bob);
-
-        let lamports = 1_000_000;
+    fn forward_transaction_sender(
+        light_rpc: &LightRpc,
+        alice: &Keypair,
+        bob: &Keypair,
+        lamports: u64,
+    ) -> Signature {
+        let frompubkey = Signer::pubkey(alice);
+        let topubkey = Signer::pubkey(bob);
         match light_rpc
             .thin_client
             .rpc_client()
             .request_airdrop(&frompubkey, LAMPORTS_PER_SOL)
         {
             Ok(sig) => {
-                loop {
-                    let confirmed = light_rpc
-                        .confirm_transaction(&sig, CommitmentConfig::confirmed())
-                        .unwrap()
-                        .value;
-
-                    if confirmed {
-                        println!("Request Airdrop Transaction: {} Confirmed", sig);
-                        break std::time::Instant::now();
-                    };
-                }
+                let confirmed = confirm_transaction_sender(&light_rpc, &sig, 300);
+                println!("Transaction: {} Confirmed", sig);
             }
             Err(_) => println!("Error requesting airdrop"),
         };
+
         let ix = system_instruction::transfer(&frompubkey, &topubkey, lamports);
         let recent_blockhash = light_rpc
             .thin_client
@@ -112,25 +100,47 @@ mod tests {
         let txn = Transaction::new_signed_with_payer(
             &[ix],
             Some(&frompubkey),
-            &[&alice],
+            &[alice],
             recent_blockhash,
         );
 
-        let sig = light_rpc.forward_transaction(txn).unwrap();
-        let start = std::time::Instant::now();
-        let end = loop {
+        let signature = light_rpc.forward_transaction(txn).unwrap();
+        signature
+    }
+
+    fn confirm_transaction_sender(
+        light_rpc: &LightRpc,
+        signature: &Signature,
+        mut retries: u16,
+    ) -> bool {
+        while retries > 0 {
             let confirmed = light_rpc
-                .confirm_transaction(&sig, CommitmentConfig::confirmed())
+                .confirm_transaction(signature, CommitmentConfig::confirmed())
                 .unwrap()
                 .value;
             if confirmed {
-                println!("Transaction: {} Confirmed", sig);
-                break std::time::Instant::now();
+                return true;
             }
-        };
+            retries -= 1;
+            thread::sleep(Duration::from_millis(500))
+        }
+        false
+    }
 
-        println!("Transaction was sent at: {:?}", start);
-        println!("Transaction was confirmed at: {:?}", end);
-        println!("Time Taken: {:?}", end - start);
+    #[test]
+    fn test_forward_transaction_confirm_transaction() {
+        let light_rpc = LightRpc::new(
+            RPC_ADDR.parse().unwrap(),
+            TPU_ADDR.parse().unwrap(),
+            CONNECTION_POOL_SIZE,
+        );
+        let alice = Keypair::new();
+        let bob = Keypair::new();
+
+        let lamports = 1_000_000;
+
+        let sig = forward_transaction_sender(&light_rpc, &alice, &bob, lamports);
+        let res = confirm_transaction_sender(&light_rpc, &sig, 300);
+        assert!(res)
     }
 }

@@ -7,3 +7,10 @@ edition = "2021"
 solana-client={path = "../client"}
 solana-sdk={path = "../sdk"}
 tokio = { version = "1.14.1", features = ["full"]}
+csv = "1.1.6"
+serde = "1.0.147"
+bencher = "0.1.5"
+
+[[bench]]
+name="metrics"
+harness=false
