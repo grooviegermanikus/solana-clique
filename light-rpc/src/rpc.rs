@@ -1,4 +1,5 @@
 use {
+    rayon::prelude::{IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator},
     solana_client::{
         client_error::ClientError, connection_cache::ConnectionCache, rpc_response::Response,
         thin_client::ThinClient,
@@ -42,6 +43,16 @@ impl LightRpc {
         self.thin_client.async_send_transaction(transaction)
     }
 
+    pub fn forward_transactions(
+        &self,
+        transactions: Vec<Transaction>,
+    ) -> Vec<Result<Signature, TransportError>> {
+        transactions
+            .par_iter()
+            .map(|tx| self.forward_transaction(tx.clone()))
+            .collect()
+    }
+
     pub fn confirm_transaction(
         &self,
         signature: &Signature,
@@ -59,7 +70,7 @@ pub fn forward_transaction_sender(
     alice: &Keypair,
     bob: &Keypair,
     lamports: u64,
-) -> Signature {
+) -> Vec<Signature> {
     let frompubkey = Signer::pubkey(alice);
     let topubkey = Signer::pubkey(bob);
     light_rpc
@@ -67,37 +78,56 @@ pub fn forward_transaction_sender(
         .rpc_client()
         .request_airdrop(&frompubkey, LAMPORTS_PER_SOL)
         .unwrap();
+    let mut txs = vec![];
 
-    let ix = system_instruction::transfer(&frompubkey, &topubkey, lamports);
-    let recent_blockhash = light_rpc
-        .thin_client
-        .rpc_client()
-        .get_latest_blockhash()
-        .expect("Failed to get latest blockhash.");
-    let txn =
-        Transaction::new_signed_with_payer(&[ix], Some(&frompubkey), &[alice], recent_blockhash);
+    for i in 0..50 {
+        let ix = system_instruction::transfer(&frompubkey, &topubkey, (lamports + i));
+        let recent_blockhash = light_rpc
+            .thin_client
+            .rpc_client()
+            .get_latest_blockhash()
+            .expect("Failed to get latest blockhash.");
+        let txn = Transaction::new_signed_with_payer(
+            &[ix],
+            Some(&frompubkey),
+            &[alice],
+            recent_blockhash,
+        );
+        txs.push(txn);
+    }
 
-    light_rpc.forward_transaction(txn).unwrap()
-    
+    let p = light_rpc.forward_transactions(txs);
+    p.into_iter().map(|p| p.unwrap()).collect()
 }
-
+#[derive(Debug)]
+pub struct ConfirmationStatus {
+    signature: Signature,
+    confirmation_status: bool,
+}
 pub fn confirm_transaction_sender(
     light_rpc: &LightRpc,
-    signature: &Signature,
+    signatures: Vec<Signature>,
     mut retries: u16,
-) -> bool {
-    while retries > 0 {
-        let confirmed = light_rpc
-            .confirm_transaction(signature, CommitmentConfig::confirmed())
-            .unwrap()
-            .value;
-        if confirmed {
-            return true;
-        }
-        retries -= 1;
-        //thread::sleep(Duration::from_millis(500))
-    }
-    false
+) -> Vec<ConfirmationStatus> {
+    let x = signatures
+        .par_iter()
+        .map(|signature| {
+            loop {
+                let confirmed = light_rpc
+                    .confirm_transaction(signature, CommitmentConfig::confirmed())
+                    .unwrap()
+                    .value;
+                if confirmed {
+                    break ConfirmationStatus {
+                        signature: *signature,
+                        confirmation_status: confirmed,
+                    };
+                }
+                //thread::sleep(Duration::from_millis(500))
+            }
+        })
+        .collect();
+    x
 }
 
 #[cfg(test)]
@@ -136,7 +166,7 @@ mod tests {
         let lamports = 1_000_000;
 
         let sig = forward_transaction_sender(&light_rpc, &alice, &bob, lamports);
-        let res = confirm_transaction_sender(&light_rpc, &sig, 300);
-        assert!(res)
+        let x = confirm_transaction_sender(&light_rpc, sig, 300);
+        println!("{:#?}", x);
     }
 }

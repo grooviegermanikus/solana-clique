@@ -42,8 +42,8 @@ fn test_forward_transaction_confirm_transaction(tps: u64) {
     for _ in 0..tps {
         let start_time = instant.elapsed().unwrap().as_nanos();
 
-        let signature = light_rpc::forward_transaction_sender(&light_rpc, &alice, &bob, lamports);
-        let confirmed = light_rpc::confirm_transaction_sender(&light_rpc, &signature, 300);
+        let signatures = light_rpc::forward_transaction_sender(&light_rpc, &alice, &bob, lamports);
+        let confirmed = light_rpc::confirm_transaction_sender(&light_rpc, signatures, 300);
 
         let end_time = instant.elapsed().unwrap().as_nanos();
 
