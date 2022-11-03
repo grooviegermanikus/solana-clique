@@ -16,9 +16,10 @@ use {
     },
     std::{net::SocketAddr, sync::Arc, thread, time::Duration},
 };
-// use solana_client::tpu_client::TpuSenderError;
 
-// type Result<T> = std::result::Result<T, TpuSenderError>;
+pub enum ConfirmationStrategy {
+    RpcConfirm,
+}
 
 pub struct LightRpc {
     pub connection_cache: Arc<ConnectionCache>,
@@ -57,10 +58,14 @@ impl LightRpc {
         &self,
         signature: &Signature,
         commitment_config: CommitmentConfig,
+        confirmation_strategy: ConfirmationStrategy,
     ) -> Result<Response<bool>, ClientError> {
-        self.thin_client
-            .rpc_client()
-            .confirm_transaction_with_commitment(signature, commitment_config)
+        match confirmation_strategy {
+            ConfirmationStrategy::RpcConfirm => self
+                .thin_client
+                .rpc_client()
+                .confirm_transaction_with_commitment(signature, commitment_config),
+        }
     }
 }
 
@@ -114,7 +119,11 @@ pub fn confirm_transaction_sender(
         .map(|signature| {
             loop {
                 let confirmed = light_rpc
-                    .confirm_transaction(signature, CommitmentConfig::confirmed())
+                    .confirm_transaction(
+                        signature,
+                        CommitmentConfig::confirmed(),
+                        ConfirmationStrategy::RpcConfirm,
+                    )
                     .unwrap()
                     .value;
                 if confirmed {
