@@ -4,10 +4,16 @@ use {
         thin_client::ThinClient,
     },
     solana_sdk::{
-        client::AsyncClient, commitment_config::CommitmentConfig, signature::Signature,
-        transaction::Transaction, transport::TransportError,
+        client::AsyncClient,
+        commitment_config::CommitmentConfig,
+        native_token::LAMPORTS_PER_SOL,
+        signature::Signature,
+        signer::{keypair::Keypair, Signer},
+        system_instruction,
+        transaction::Transaction,
+        transport::TransportError,
     },
-    std::{net::SocketAddr, sync::Arc},
+    std::{net::SocketAddr, sync::Arc, thread, time::Duration},
 };
 // use solana_client::tpu_client::TpuSenderError;
 
@@ -47,6 +53,53 @@ impl LightRpc {
     }
 }
 
+//Two helper methods to forward a transaction and confirm it
+pub fn forward_transaction_sender(
+    light_rpc: &LightRpc,
+    alice: &Keypair,
+    bob: &Keypair,
+    lamports: u64,
+) -> Signature {
+    let frompubkey = Signer::pubkey(alice);
+    let topubkey = Signer::pubkey(bob);
+    light_rpc
+        .thin_client
+        .rpc_client()
+        .request_airdrop(&frompubkey, LAMPORTS_PER_SOL)
+        .unwrap();
+
+    let ix = system_instruction::transfer(&frompubkey, &topubkey, lamports);
+    let recent_blockhash = light_rpc
+        .thin_client
+        .rpc_client()
+        .get_latest_blockhash()
+        .expect("Failed to get latest blockhash.");
+    let txn =
+        Transaction::new_signed_with_payer(&[ix], Some(&frompubkey), &[alice], recent_blockhash);
+
+    light_rpc.forward_transaction(txn).unwrap()
+    
+}
+
+pub fn confirm_transaction_sender(
+    light_rpc: &LightRpc,
+    signature: &Signature,
+    mut retries: u16,
+) -> bool {
+    while retries > 0 {
+        let confirmed = light_rpc
+            .confirm_transaction(signature, CommitmentConfig::confirmed())
+            .unwrap()
+            .value;
+        if confirmed {
+            return true;
+        }
+        retries -= 1;
+        //thread::sleep(Duration::from_millis(500))
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use {
@@ -70,63 +123,6 @@ mod tests {
             CONNECTION_POOL_SIZE,
         );
     }
-
-    fn forward_transaction_sender(
-        light_rpc: &LightRpc,
-        alice: &Keypair,
-        bob: &Keypair,
-        lamports: u64,
-    ) -> Signature {
-        let frompubkey = Signer::pubkey(alice);
-        let topubkey = Signer::pubkey(bob);
-        match light_rpc
-            .thin_client
-            .rpc_client()
-            .request_airdrop(&frompubkey, LAMPORTS_PER_SOL)
-        {
-            Ok(sig) => {
-                let confirmed = confirm_transaction_sender(&light_rpc, &sig, 300);
-                println!("Transaction: {} Confirmed", sig);
-            }
-            Err(_) => println!("Error requesting airdrop"),
-        };
-
-        let ix = system_instruction::transfer(&frompubkey, &topubkey, lamports);
-        let recent_blockhash = light_rpc
-            .thin_client
-            .rpc_client()
-            .get_latest_blockhash()
-            .expect("Failed to get latest blockhash.");
-        let txn = Transaction::new_signed_with_payer(
-            &[ix],
-            Some(&frompubkey),
-            &[alice],
-            recent_blockhash,
-        );
-
-        let signature = light_rpc.forward_transaction(txn).unwrap();
-        signature
-    }
-
-    fn confirm_transaction_sender(
-        light_rpc: &LightRpc,
-        signature: &Signature,
-        mut retries: u16,
-    ) -> bool {
-        while retries > 0 {
-            let confirmed = light_rpc
-                .confirm_transaction(signature, CommitmentConfig::confirmed())
-                .unwrap()
-                .value;
-            if confirmed {
-                return true;
-            }
-            retries -= 1;
-            thread::sleep(Duration::from_millis(500))
-        }
-        false
-    }
-
     #[test]
     fn test_forward_transaction_confirm_transaction() {
         let light_rpc = LightRpc::new(

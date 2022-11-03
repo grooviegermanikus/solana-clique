@@ -1,4 +1,3 @@
-use std::time::SystemTime;
 #[cfg(test)]
 use {
     light_rpc::LightRpc,
@@ -8,6 +7,7 @@ use {
         native_token::LAMPORTS_PER_SOL, signature::Signer, signer::keypair::Keypair,
         system_instruction, transaction::Transaction,
     },
+    std::time::SystemTime,
     std::{thread, time::Duration},
 };
 
@@ -23,57 +23,6 @@ struct Metrics {
     end_time: u128,
     #[serde(rename = "duration(ns)")]
     duration: u128,
-}
-
-fn forward_transaction_sender(
-    light_rpc: &LightRpc,
-    alice: &Keypair,
-    bob: &Keypair,
-    lamports: u64,
-) -> Signature {
-    let frompubkey = Signer::pubkey(alice);
-    let topubkey = Signer::pubkey(bob);
-    match light_rpc
-        .thin_client
-        .rpc_client()
-        .request_airdrop(&frompubkey, LAMPORTS_PER_SOL)
-    {
-        Ok(sig) => {
-            let confirmed = confirm_transaction_sender(&light_rpc, &sig, 300);
-        }
-        Err(_) => println!("Error requesting airdrop"),
-    };
-
-    let ix = system_instruction::transfer(&frompubkey, &topubkey, lamports);
-    let recent_blockhash = light_rpc
-        .thin_client
-        .rpc_client()
-        .get_latest_blockhash()
-        .expect("Failed to get latest blockhash.");
-    let txn =
-        Transaction::new_signed_with_payer(&[ix], Some(&frompubkey), &[alice], recent_blockhash);
-
-    let signature = light_rpc.forward_transaction(txn).unwrap();
-    signature
-}
-
-fn confirm_transaction_sender(
-    light_rpc: &LightRpc,
-    signature: &Signature,
-    mut retries: u16,
-) -> bool {
-    while retries > 0 {
-        let confirmed = light_rpc
-            .confirm_transaction(signature, CommitmentConfig::confirmed())
-            .unwrap()
-            .value;
-        if confirmed {
-            return true;
-        }
-        retries -= 1;
-        thread::sleep(Duration::from_millis(500))
-    }
-    false
 }
 
 fn test_forward_transaction_confirm_transaction(tps: u64) {
@@ -93,7 +42,8 @@ fn test_forward_transaction_confirm_transaction(tps: u64) {
     for _ in 0..tps {
         let start_time = instant.elapsed().unwrap().as_nanos();
 
-        let signature = forward_transaction_sender(&light_rpc, &alice, &bob, lamports);
+        let signature = light_rpc::forward_transaction_sender(&light_rpc, &alice, &bob, lamports);
+        let confirmed = light_rpc::confirm_transaction_sender(&light_rpc, &signature, 300);
 
         let end_time = instant.elapsed().unwrap().as_nanos();
 
