@@ -39,12 +39,9 @@ fn test_forward_transaction_confirm_transaction(times: u64) {
     let instant = SystemTime::now();
     for _ in 0..times {
         //generating a new keypair for each transaction
-        let alice = Keypair::new();
-        let bob = Keypair::new();
         let start_time = instant.elapsed().unwrap().as_nanos();
 
-        let signatures =
-            light_rpc::forward_transaction_sender(&light_rpc, &alice, &bob, lamports, 200);
+        let signatures = light_rpc::forward_transaction_sender(&light_rpc, lamports, 100);
         let confirmed = light_rpc::confirm_transaction_sender(&light_rpc, signatures, 300);
 
         let end_time = instant.elapsed().unwrap().as_nanos();

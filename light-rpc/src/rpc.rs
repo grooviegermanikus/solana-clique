@@ -72,23 +72,24 @@ impl LightRpc {
 //Two helper methods to forward a transaction and confirm it
 pub fn forward_transaction_sender(
     light_rpc: &LightRpc,
-    alice: &Keypair,
-    bob: &Keypair,
     lamports: u64,
     num_transactions: u64,
 ) -> Vec<Signature> {
-    let frompubkey = Signer::pubkey(alice);
-    let topubkey = Signer::pubkey(bob);
-    light_rpc
-        .thin_client
-        .rpc_client()
-        .request_airdrop(&frompubkey, LAMPORTS_PER_SOL)
-        .unwrap();
     let mut txs = vec![];
 
     for i in 0..num_transactions {
+        let alice = Keypair::new();
+        let bob = Keypair::new();
+        let frompubkey = Signer::pubkey(&alice);
+        let topubkey = Signer::pubkey(&bob);
+
+        light_rpc
+            .thin_client
+            .rpc_client()
+            .request_airdrop(&frompubkey, LAMPORTS_PER_SOL)
+            .unwrap();
         //changing the lamports so that a new transactiion can be created each time
-        let ix = system_instruction::transfer(&frompubkey, &topubkey, (lamports + i));
+        let ix = system_instruction::transfer(&frompubkey, &topubkey, lamports);
         let recent_blockhash = light_rpc
             .thin_client
             .rpc_client()
@@ -97,7 +98,7 @@ pub fn forward_transaction_sender(
         let txn = Transaction::new_signed_with_payer(
             &[ix],
             Some(&frompubkey),
-            &[alice],
+            &[&alice],
             recent_blockhash,
         );
         txs.push(txn);
@@ -176,7 +177,7 @@ mod tests {
 
         let lamports = 1_000_000;
 
-        let sig = forward_transaction_sender(&light_rpc, &alice, &bob, lamports, 100);
+        let sig = forward_transaction_sender(&light_rpc, lamports, 100);
         let x = confirm_transaction_sender(&light_rpc, sig, 300);
         println!("{:#?}", x);
     }
