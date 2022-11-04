@@ -29,7 +29,7 @@ struct Metrics {
     confirm_end_time: u128,
     #[serde(rename = "Confirm transaction duration(ms)")]
     confirm_duration: u128,
-    #[serde(rename = "Total duration(ns)")]
+    #[serde(rename = "Total duration(ms)")]
     duration: u128,
 }
 
