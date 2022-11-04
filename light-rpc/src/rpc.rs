@@ -78,6 +78,7 @@ pub fn forward_transaction_sender(
     let mut txs = vec![];
 
     for i in 0..num_transactions {
+        //generate new keypair for each transaction
         let alice = Keypair::new();
         let bob = Keypair::new();
         let frompubkey = Signer::pubkey(&alice);
@@ -88,7 +89,6 @@ pub fn forward_transaction_sender(
             .rpc_client()
             .request_airdrop(&frompubkey, LAMPORTS_PER_SOL)
             .unwrap();
-        //changing the lamports so that a new transactiion can be created each time
         let ix = system_instruction::transfer(&frompubkey, &topubkey, lamports);
         let recent_blockhash = light_rpc
             .thin_client
