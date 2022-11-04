@@ -25,7 +25,7 @@ struct Metrics {
     forward_duration: u128,
     #[serde(rename = "start confirm transaction time(ms)")]
     confirm_start_time: u128,
-    #[serde(rename = "end forward transaction time(ms)")]
+    #[serde(rename = "end confirm transaction time(ms)")]
     confirm_end_time: u128,
     #[serde(rename = "Confirm transaction duration(ms)")]
     confirm_duration: u128,
@@ -48,7 +48,7 @@ fn test_forward_transaction_confirm_transaction(times: u64) {
     for _ in 0..times {
         //generating a new keypair for each transaction
         let forward_start_time = instant.elapsed().unwrap().as_millis();
-        let signatures = light_rpc::forward_transaction_sender(&light_rpc, lamports, 10);
+        let signatures = light_rpc::forward_transaction_sender(&light_rpc, lamports, 10000);
         let forward_end_time = instant.elapsed().unwrap().as_millis();
 
         let confirm_start_time = instant.elapsed().unwrap().as_millis();
