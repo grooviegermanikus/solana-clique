@@ -165,20 +165,4 @@ mod tests {
             CONNECTION_POOL_SIZE,
         );
     }
-    #[test]
-    fn test_forward_transaction_confirm_transaction() {
-        let light_rpc = LightRpc::new(
-            RPC_ADDR.parse().unwrap(),
-            TPU_ADDR.parse().unwrap(),
-            CONNECTION_POOL_SIZE,
-        );
-        let alice = Keypair::new();
-        let bob = Keypair::new();
-
-        let lamports = 1_000_000;
-
-        let sig = forward_transaction_sender(&light_rpc, lamports, 100);
-        let x = confirm_transaction_sender(&light_rpc, sig, 300);
-        println!("{:#?}", x);
-    }
 }

@@ -14,6 +14,8 @@ use {
 const RPC_ADDR: &str = "127.0.0.1:8899";
 const TPU_ADDR: &str = "127.0.0.1:1027";
 const CONNECTION_POOL_SIZE: usize = 1;
+const NUM_KEYPAIRS: u64 = 64;
+const LAMPORTS_PER_TX: u64 = 5_000;
 
 #[derive(serde::Serialize)]
 struct Metrics {
@@ -40,25 +42,57 @@ fn test_forward_transaction_confirm_transaction(times: u64) {
         CONNECTION_POOL_SIZE,
     );
 
-    let lamports = 1_000_000;
-    let mut data: Vec<Metrics> = vec![];
+    let mut keypairs: Vec<Keypair> = vec![];
+    for _ in 0..NUM_KEYPAIRS {
+        let k = Keypair::new();
+        light_rpc
+            .thin_client
+            .rpc_client()
+            .request_airdrop(&k.pubkey(), LAMPORTS_PER_TX * times)
+            .unwrap();
+        keypairs.push(k);
+    }
 
-    let mut wtr = csv::Writer::from_path("metrics.csv").unwrap();
+    let mut metrics: Vec<Metrics> = vec![];
     let instant = SystemTime::now();
     for _ in 0..times {
-        //generating a new keypair for each transaction
+        let recent_blockhash = light_rpc
+            .thin_client
+            .rpc_client()
+            .get_latest_blockhash()
+            .expect("Failed to get latest blockhash.");
+
+        // pre-create transactions to avoid signature costs
+        let mut txs = vec![];
+        for keypair in keypairs.iter() {
+            let ix = system_instruction::transfer(&keypair.pubkey(), &keypair.pubkey(), 0);
+            let tx = Transaction::new_signed_with_payer(
+                &[ix],
+                Some(&keypair.pubkey()),
+                &[keypair],
+                recent_blockhash,
+            );
+            txs.push(tx);
+        }
+
+        // forward whole batch
         let forward_start_time = instant.elapsed().unwrap().as_millis();
-        let signatures = light_rpc::forward_transaction_sender(&light_rpc, lamports, 10000);
+        let signatures = light_rpc
+            .forward_transactions(txs)
+            .into_iter()
+            .map(|p| p.unwrap())
+            .collect();
         let forward_end_time = instant.elapsed().unwrap().as_millis();
 
+        // confirm whole bactch
         let confirm_start_time = instant.elapsed().unwrap().as_millis();
         let confirmed = light_rpc::confirm_transaction_sender(&light_rpc, signatures, 300);
         let confirm_end_time = instant.elapsed().unwrap().as_millis();
 
+        // collect metrics
         let forward_duration = forward_end_time - forward_start_time;
         let confirm_duration = confirm_end_time - confirm_start_time;
-
-        data.push(Metrics {
+        metrics.push(Metrics {
             forward_start_time,
             forward_end_time,
             forward_duration,
@@ -68,7 +102,10 @@ fn test_forward_transaction_confirm_transaction(times: u64) {
             duration: forward_duration + confirm_duration,
         });
     }
-    for d in data.into_iter() {
+
+    // save metrics in file
+    let mut wtr = csv::Writer::from_path("metrics.csv").unwrap();
+    for d in metrics.into_iter() {
         wtr.serialize(d).unwrap();
     }
 }
