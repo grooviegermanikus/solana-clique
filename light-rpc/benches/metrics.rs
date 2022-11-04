@@ -17,11 +17,19 @@ const CONNECTION_POOL_SIZE: usize = 1;
 
 #[derive(serde::Serialize)]
 struct Metrics {
-    #[serde(rename = "start time(ns)")]
-    start_time: u128,
-    #[serde(rename = "end time(ns)")]
-    end_time: u128,
-    #[serde(rename = "duration(ns)")]
+    #[serde(rename = "start forward transaction time(ns)")]
+    forward_start_time: u128,
+    #[serde(rename = "end forward transaction time(ns)")]
+    forward_end_time: u128,
+    #[serde(rename = "Forward transaction duration(ns)")]
+    forward_duration: u128,
+    #[serde(rename = "start confirm transaction time(ns)")]
+    confirm_start_time: u128,
+    #[serde(rename = "end forward transaction time(ns)")]
+    confirm_end_time: u128,
+    #[serde(rename = "Confirm transaction duration(ns)")]
+    confirm_duration: u128,
+    #[serde(rename = "Total duration(ns)")]
     duration: u128,
 }
 
@@ -39,17 +47,25 @@ fn test_forward_transaction_confirm_transaction(times: u64) {
     let instant = SystemTime::now();
     for _ in 0..times {
         //generating a new keypair for each transaction
-        let start_time = instant.elapsed().unwrap().as_nanos();
+        let forward_start_time = instant.elapsed().unwrap().as_nanos();
+        let signatures = light_rpc::forward_transaction_sender(&light_rpc, lamports, 10);
+        let forward_end_time = instant.elapsed().unwrap().as_nanos();
 
-        let signatures = light_rpc::forward_transaction_sender(&light_rpc, lamports, 100);
+        let confirm_start_time = instant.elapsed().unwrap().as_nanos();
         let confirmed = light_rpc::confirm_transaction_sender(&light_rpc, signatures, 300);
+        let confirm_end_time = instant.elapsed().unwrap().as_nanos();
 
-        let end_time = instant.elapsed().unwrap().as_nanos();
+        let forward_duration = forward_end_time - forward_start_time;
+        let confirm_duration = confirm_end_time - confirm_start_time;
 
         data.push(Metrics {
-            start_time,
-            end_time,
-            duration: end_time - start_time,
+            forward_start_time,
+            forward_end_time,
+            forward_duration,
+            confirm_start_time,
+            confirm_end_time,
+            confirm_duration,
+            duration: forward_duration + confirm_duration,
         });
     }
     for d in data.into_iter() {
