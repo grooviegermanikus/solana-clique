@@ -72,6 +72,7 @@ impl AccountsHashVerifier {
                         &accounts_package_receiver,
                     ) {
                         info!("handling accounts package: {accounts_package:?}");
+                        let enqueued_time = accounts_package.enqueued.elapsed();
 
                         let (_, measure) = measure!(Self::process_accounts_package(
                             accounts_package,
@@ -97,6 +98,7 @@ impl AccountsHashVerifier {
                                 num_re_enqueued_accounts_packages as i64,
                                 i64
                             ),
+                            ("enqueued-time-us", enqueued_time.as_micros() as i64, i64),
                             ("total-processing-time-us", measure.as_us() as i64, i64),
                         );
                     } else {
@@ -223,7 +225,7 @@ impl AccountsHashVerifier {
         let (accounts_hash, lamports) = accounts_package
             .accounts
             .accounts_db
-            .calculate_accounts_hash_without_index(
+            .calculate_accounts_hash_from_storages(
                 &CalcAccountsHashConfig {
                     use_bg_thread_pool: true,
                     check_hash: false,
@@ -244,7 +246,7 @@ impl AccountsHashVerifier {
             let result_with_index = accounts_package
                 .accounts
                 .accounts_db
-                .calculate_accounts_hash(
+                .calculate_accounts_hash_from_index(
                     accounts_package.slot,
                     &CalcAccountsHashConfig {
                         use_bg_thread_pool: false,
@@ -263,7 +265,7 @@ impl AccountsHashVerifier {
             let _ = accounts_package
                 .accounts
                 .accounts_db
-                .calculate_accounts_hash_without_index(
+                .calculate_accounts_hash_from_storages(
                     &CalcAccountsHashConfig {
                         use_bg_thread_pool: false,
                         check_hash: false,
@@ -300,7 +302,6 @@ impl AccountsHashVerifier {
             accounts_package.snapshot_links.path(),
             accounts_package.slot,
             &accounts_hash,
-            None,
             None,
         );
         datapoint_info!(
@@ -467,15 +468,9 @@ mod tests {
         super::*,
         rand::seq::SliceRandom,
         solana_gossip::{cluster_info::make_accounts_hashes_message, contact_info::ContactInfo},
-        solana_runtime::{
-            rent_collector::RentCollector,
-            snapshot_utils::{ArchiveFormat, SnapshotVersion},
-        },
         solana_sdk::{
-            genesis_config::ClusterType,
             hash::hash,
             signature::{Keypair, Signer},
-            sysvar::epoch_schedule::EpochSchedule,
         },
         solana_streamer::socket::SocketAddrSpace,
         std::str::FromStr,
@@ -525,7 +520,6 @@ mod tests {
     #[test]
     fn test_max_hashes() {
         solana_logger::setup();
-        use {std::path::PathBuf, tempfile::TempDir};
         let keypair = Keypair::new();
 
         let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), 0);
@@ -548,19 +542,8 @@ mod tests {
                 package_type: AccountsPackageType::AccountsHashVerifier,
                 slot: full_snapshot_archive_interval_slots + i as u64,
                 block_height: full_snapshot_archive_interval_slots + i as u64,
-                slot_deltas: vec![],
-                snapshot_links: TempDir::new().unwrap(),
-                snapshot_storages: vec![],
-                archive_format: ArchiveFormat::TarBzip2,
-                snapshot_version: SnapshotVersion::default(),
-                full_snapshot_archives_dir: PathBuf::default(),
-                incremental_snapshot_archives_dir: PathBuf::default(),
-                expected_capitalization: 0,
-                accounts_hash_for_testing: None,
-                cluster_type: ClusterType::MainnetBeta,
                 accounts: Arc::clone(&accounts),
-                epoch_schedule: EpochSchedule::default(),
-                rent_collector: RentCollector::default(),
+                ..AccountsPackage::default_for_tests()
             };
 
             AccountsHashVerifier::process_accounts_package(

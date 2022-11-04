@@ -5,19 +5,19 @@ use {
         bank::{Bank, BankSlotDelta},
         rent_collector::RentCollector,
         snapshot_archive_info::{SnapshotArchiveInfo, SnapshotArchiveInfoGetter},
+        snapshot_hash::SnapshotHash,
         snapshot_utils::{
             self, ArchiveFormat, BankSnapshotInfo, Result, SnapshotVersion,
             TMP_BANK_SNAPSHOT_PREFIX,
         },
     },
     log::*,
-    solana_sdk::{
-        clock::Slot, genesis_config::ClusterType, hash::Hash, sysvar::epoch_schedule::EpochSchedule,
-    },
+    solana_sdk::{clock::Slot, hash::Hash, sysvar::epoch_schedule::EpochSchedule},
     std::{
         fs,
         path::{Path, PathBuf},
         sync::{Arc, Mutex},
+        time::Instant,
     },
     tempfile::TempDir,
 };
@@ -42,10 +42,13 @@ pub struct AccountsPackage {
     pub incremental_snapshot_archives_dir: PathBuf,
     pub expected_capitalization: u64,
     pub accounts_hash_for_testing: Option<Hash>,
-    pub cluster_type: ClusterType,
     pub accounts: Arc<Accounts>,
     pub epoch_schedule: EpochSchedule,
     pub rent_collector: RentCollector,
+
+    /// The instant this accounts package was send to the queue.
+    /// Used to track how long accounts packages wait before processing.
+    pub enqueued: Instant,
 }
 
 impl AccountsPackage {
@@ -112,10 +115,10 @@ impl AccountsPackage {
                 .to_path_buf(),
             expected_capitalization: bank.capitalization(),
             accounts_hash_for_testing,
-            cluster_type: bank.cluster_type(),
             accounts: bank.accounts(),
             epoch_schedule: *bank.epoch_schedule(),
             rent_collector: bank.rent_collector().clone(),
+            enqueued: Instant::now(),
         })
     }
 
@@ -135,10 +138,10 @@ impl AccountsPackage {
             incremental_snapshot_archives_dir: PathBuf::default(),
             expected_capitalization: u64::default(),
             accounts_hash_for_testing: Option::default(),
-            cluster_type: ClusterType::Development,
             accounts: Arc::new(Accounts::default_for_tests()),
             epoch_schedule: EpochSchedule::default(),
             rent_collector: RentCollector::default(),
+            enqueued: Instant::now(),
         }
     }
 }
@@ -175,6 +178,7 @@ pub struct SnapshotPackage {
 
 impl SnapshotPackage {
     pub fn new(accounts_package: AccountsPackage, accounts_hash: Hash) -> Self {
+        let snapshot_hash = SnapshotHash::new(&accounts_hash);
         let mut snapshot_storages = accounts_package.snapshot_storages;
         let (snapshot_type, snapshot_archive_path) = match accounts_package.package_type {
             AccountsPackageType::Snapshot(snapshot_type) => match snapshot_type {
@@ -183,7 +187,7 @@ impl SnapshotPackage {
                     snapshot_utils::build_full_snapshot_archive_path(
                         accounts_package.full_snapshot_archives_dir,
                         accounts_package.slot,
-                        &accounts_hash,
+                        &snapshot_hash,
                         accounts_package.archive_format,
                     ),
                 ),
@@ -206,7 +210,7 @@ impl SnapshotPackage {
                             accounts_package.incremental_snapshot_archives_dir,
                             incremental_snapshot_base_slot,
                             accounts_package.slot,
-                            &accounts_hash,
+                            &snapshot_hash,
                             accounts_package.archive_format,
                         ),
                     )
@@ -221,7 +225,7 @@ impl SnapshotPackage {
             snapshot_archive_info: SnapshotArchiveInfo {
                 path: snapshot_archive_path,
                 slot: accounts_package.slot,
-                hash: accounts_hash,
+                hash: snapshot_hash,
                 archive_format: accounts_package.archive_format,
             },
             block_height: accounts_package.block_height,

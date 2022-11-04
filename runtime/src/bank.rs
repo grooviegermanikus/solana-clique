@@ -44,8 +44,9 @@ use {
             TransactionLoadResult,
         },
         accounts_db::{
-            AccountShrinkThreshold, AccountsDbConfig, IncludeSlotInHash, SnapshotStorages,
-            ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS, ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            AccountShrinkThreshold, AccountsDbConfig, CalcAccountsHashDataSource,
+            IncludeSlotInHash, SnapshotStorages, ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS,
+            ACCOUNTS_DB_CONFIG_FOR_TESTING,
         },
         accounts_index::{AccountSecondaryIndexes, IndexKey, ScanConfig, ScanResult, ZeroLamport},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
@@ -59,6 +60,7 @@ use {
         message_processor::MessageProcessor,
         rent_collector::{CollectedInfo, RentCollector},
         runtime_config::RuntimeConfig,
+        snapshot_hash::SnapshotHash,
         stake_account::{self, StakeAccount},
         stake_weighted_timestamp::{
             calculate_stake_weighted_timestamp, MaxAllowableDrift,
@@ -491,7 +493,15 @@ pub type TransactionBalances = Vec<Vec<u64>>;
 
 /// An ordered list of compiled instructions that were invoked during a
 /// transaction instruction
-pub type InnerInstructions = Vec<CompiledInstruction>;
+pub type InnerInstructions = Vec<InnerInstruction>;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InnerInstruction {
+    pub instruction: CompiledInstruction,
+    /// Invocation stack height of this instruction. Instruction stack height
+    /// starts at 1 for transaction instructions.
+    pub stack_height: u8,
+}
 
 /// A list of compiled instructions that were invoked during each instruction of
 /// a transaction
@@ -511,10 +521,12 @@ pub fn inner_instructions_list_from_instruction_trace(
         if let Ok(instruction_context) =
             transaction_context.get_instruction_context_at_index_in_trace(index_in_trace)
         {
-            if instruction_context.get_stack_height() == TRANSACTION_LEVEL_STACK_HEIGHT {
+            let stack_height = instruction_context.get_stack_height();
+            if stack_height == TRANSACTION_LEVEL_STACK_HEIGHT {
                 outer_instructions.push(Vec::new());
             } else if let Some(inner_instructions) = outer_instructions.last_mut() {
-                inner_instructions.push(CompiledInstruction::new_from_raw_parts(
+                let stack_height = u8::try_from(stack_height).unwrap_or(u8::MAX);
+                let instruction = CompiledInstruction::new_from_raw_parts(
                     instruction_context
                         .get_index_of_program_account_in_transaction(
                             instruction_context
@@ -532,7 +544,11 @@ pub fn inner_instructions_list_from_instruction_trace(
                                 .unwrap_or_default() as u8
                         })
                         .collect(),
-                ));
+                );
+                inner_instructions.push(InnerInstruction {
+                    instruction,
+                    stack_height,
+                });
             } else {
                 debug_assert!(false);
             }
@@ -1976,6 +1992,11 @@ impl Bank {
         // (BankFieldsToSerialize/BankFieldsToDeserialize) and initializing
         // from the passed in genesis_config instead (as new()/new_with_paths() already do)
         assert_eq!(
+            bank.genesis_creation_time, genesis_config.creation_time,
+            "Bank snapshot genesis creation time does not match genesis.bin creation time.\
+             The snapshot and genesis.bin might pertain to different clusters"
+        );
+        assert_eq!(
             bank.hashes_per_tick,
             genesis_config.poh_config.hashes_per_tick
         );
@@ -1985,7 +2006,6 @@ impl Bank {
             genesis_config.poh_config.target_tick_duration.as_nanos()
                 * genesis_config.ticks_per_slot as u128
         );
-        assert_eq!(bank.genesis_creation_time, genesis_config.creation_time);
         assert_eq!(bank.max_tick_height, (bank.slot + 1) * bank.ticks_per_slot);
         assert_eq!(
             bank.slots_per_year,
@@ -4872,7 +4892,6 @@ impl Bank {
             &self.rent_collector,
             &durable_nonce,
             lamports_per_signature,
-            self.preserve_rent_epoch_for_rent_exempt_accounts(),
             self.include_slot_in_hash(),
         );
         let rent_debits = self.collect_rent(&execution_results, loaded_txs);
@@ -5294,7 +5313,6 @@ impl Bank {
     ) -> CollectRentFromAccountsInfo {
         let mut rent_debits = RentDebits::default();
         let mut total_rent_collected_info = CollectedInfo::default();
-        let bank_slot = self.slot();
         let mut rewrites_skipped = Vec::with_capacity(accounts.len());
         let mut accounts_to_store =
             Vec::<(&Pubkey, &AccountSharedData)>::with_capacity(accounts.len());
@@ -5302,33 +5320,21 @@ impl Bank {
         let mut time_hashing_skipped_rewrites_us = 0;
         let mut time_storing_accounts_us = 0;
         let can_skip_rewrites = self.rc.accounts.accounts_db.skip_rewrites || just_rewrites;
-        let preserve_rent_epoch_for_rent_exempt_accounts =
-            self.preserve_rent_epoch_for_rent_exempt_accounts();
-        for (pubkey, account, loaded_slot) in accounts.iter_mut() {
-            let old_rent_epoch = account.rent_epoch();
+        for (pubkey, account, _loaded_slot) in accounts.iter_mut() {
             let (rent_collected_info, measure) =
                 measure!(self.rent_collector.collect_from_existing_account(
                     pubkey,
                     account,
                     self.rc.accounts.accounts_db.filler_account_suffix.as_ref(),
-                    preserve_rent_epoch_for_rent_exempt_accounts,
                 ));
             time_collecting_rent_us += measure.as_us();
 
             // only store accounts where we collected rent
             // but get the hash for all these accounts even if collected rent is 0 (= not updated).
-            // Also, there's another subtle side-effect from this: this
+            // Also, there's another subtle side-effect from rewrites: this
             // ensures we verify the whole on-chain state (= all accounts)
             // via the bank delta hash slowly once per an epoch.
-            if can_skip_rewrites
-                && Self::skip_rewrite(
-                    bank_slot,
-                    rent_collected_info.rent_amount,
-                    *loaded_slot,
-                    old_rent_epoch,
-                    account,
-                )
-            {
+            if can_skip_rewrites && Self::skip_rewrite(rent_collected_info.rent_amount, account) {
                 // this would have been rewritten previously. Now we skip it.
                 // calculate the hash that we would have gotten if we did the rewrite.
                 // This will be needed to calculate the bank's hash.
@@ -5548,31 +5554,11 @@ impl Bank {
     }
 
     /// return true iff storing this account is just a rewrite and can be skipped
-    fn skip_rewrite(
-        bank_slot: Slot,
-        rent_amount: u64,
-        loaded_slot: Slot,
-        old_rent_epoch: Epoch,
-        account: &AccountSharedData,
-    ) -> bool {
-        if rent_amount != 0 || account.rent_epoch() == 0 {
-            // rent was != 0
-            // or special case for default rent value
-            // these cannot be skipped and must be written
-            return false;
-        }
-        if old_rent_epoch != account.rent_epoch() && loaded_slot == bank_slot {
-            // account's rent_epoch should increment even though we're not collecting rent.
-            // and we already wrote this account in this slot, but we did not adjust rent_epoch (sys vars for example)
-            // so, force ourselves to rewrite account if account was already written in this slot
-            // Now, the account that was written IN this slot, where normally we would have collected rent, has the corrent 'rent_epoch'.
-            // Only this last store will remain in the append vec.
-            // Otherwise, later code would assume the account was written successfully in this slot with the correct 'rent_epoch'.
-            return false;
-        }
-
-        // rent was 0 and no reason to rewrite, so THIS is a rewrite we can skip
-        true
+    fn skip_rewrite(rent_amount: u64, account: &AccountSharedData) -> bool {
+        // if rent was != 0
+        // or special case for default rent value
+        // these cannot be skipped and must be written
+        rent_amount == 0 && account.rent_epoch() != 0
     }
 
     fn prefix_from_pubkey(pubkey: &Pubkey) -> u64 {
@@ -6761,11 +6747,6 @@ impl Bank {
         datapoint_info!(
             "bank-wait_get_epoch_accounts_hash",
             ("slot", self.slot() as i64, i64),
-            (
-                "epoch_accounts_hash",
-                epoch_accounts_hash.as_ref().to_string(),
-                String
-            ),
             ("waiting-time-us", measure.as_us() as i64, i64),
         );
         epoch_accounts_hash
@@ -6983,6 +6964,11 @@ impl Bank {
         self.rc.accounts.accounts_db.get_accounts_hash(self.slot)
     }
 
+    pub fn get_snapshot_hash(&self) -> SnapshotHash {
+        let accounts_hash = self.get_accounts_hash();
+        SnapshotHash::new(&accounts_hash)
+    }
+
     pub fn get_thread_pool(&self) -> &ThreadPool {
         &self.rc.accounts.accounts_db.thread_pool_clean
     }
@@ -6994,26 +6980,22 @@ impl Bank {
             .load_account_into_read_cache(&self.ancestors, key);
     }
 
-    pub fn update_accounts_hash_with_index_option(
+    pub fn update_accounts_hash(
         &self,
-        use_index: bool,
+        data_source: CalcAccountsHashDataSource,
         mut debug_verify: bool,
         is_startup: bool,
     ) -> Hash {
-        let (hash, total_lamports) = self
-            .rc
-            .accounts
-            .accounts_db
-            .update_accounts_hash_with_index_option(
-                use_index,
-                debug_verify,
-                self.slot(),
-                &self.ancestors,
-                Some(self.capitalization()),
-                self.epoch_schedule(),
-                &self.rent_collector,
-                is_startup,
-            );
+        let (hash, total_lamports) = self.rc.accounts.accounts_db.update_accounts_hash(
+            data_source,
+            debug_verify,
+            self.slot(),
+            &self.ancestors,
+            Some(self.capitalization()),
+            self.epoch_schedule(),
+            &self.rent_collector,
+            is_startup,
+        );
         if total_lamports != self.capitalization() {
             datapoint_info!(
                 "capitalization_mismatch",
@@ -7026,19 +7008,16 @@ impl Bank {
                 // cap mismatch detected. It has been logged to metrics above.
                 // Run both versions of the calculation to attempt to get more info.
                 debug_verify = true;
-                self.rc
-                    .accounts
-                    .accounts_db
-                    .update_accounts_hash_with_index_option(
-                        use_index,
-                        debug_verify,
-                        self.slot(),
-                        &self.ancestors,
-                        Some(self.capitalization()),
-                        self.epoch_schedule(),
-                        &self.rent_collector,
-                        is_startup,
-                    );
+                self.rc.accounts.accounts_db.update_accounts_hash(
+                    data_source,
+                    debug_verify,
+                    self.slot(),
+                    &self.ancestors,
+                    Some(self.capitalization()),
+                    self.epoch_schedule(),
+                    &self.rent_collector,
+                    is_startup,
+                );
             }
 
             panic!(
@@ -7051,8 +7030,8 @@ impl Bank {
         hash
     }
 
-    pub fn update_accounts_hash(&self) -> Hash {
-        self.update_accounts_hash_with_index_option(true, false, false)
+    pub fn update_accounts_hash_for_tests(&self) -> Hash {
+        self.update_accounts_hash(CalcAccountsHashDataSource::IndexForTests, false, false)
     }
 
     /// A snapshot bank should be purged of 0 lamport accounts which are not part of the hash
@@ -7421,11 +7400,6 @@ impl Bank {
     pub fn send_to_tpu_vote_port_enabled(&self) -> bool {
         self.feature_set
             .is_active(&feature_set::send_to_tpu_vote_port::id())
-    }
-
-    fn preserve_rent_epoch_for_rent_exempt_accounts(&self) -> bool {
-        self.feature_set
-            .is_active(&feature_set::preserve_rent_epoch_for_rent_exempt_accounts::id())
     }
 
     pub fn read_cost_tracker(&self) -> LockResult<RwLockReadGuard<CostTracker>> {
@@ -8427,7 +8401,6 @@ pub(crate) mod tests {
                 &keypairs[4].pubkey(),
                 &mut account_copy,
                 None,
-                true, // preserve_rent_epoch_for_rent_exempt_accounts
             );
             assert_eq!(expected_rent.rent_amount, too_few_lamports);
             assert_eq!(account_copy.lamports(), 0);
@@ -10014,16 +9987,6 @@ pub(crate) mod tests {
         account.set_rent_epoch(later_bank.epoch() - 1); // non-zero, but less than later_bank's epoch
 
         let just_rewrites = true;
-        // 'later_slot' here is the slot the account was loaded from.
-        // Since 'later_slot' is the same slot the bank is in, this means that the account was already written IN this slot.
-        // So, we should NOT skip rewrites.
-        let result = later_bank.collect_rent_from_accounts(
-            vec![(zero_lamport_pubkey, account.clone(), later_slot)],
-            just_rewrites,
-            None,
-            PartitionIndex::default(),
-        );
-        assert!(result.rewrites_skipped.is_empty());
         // loaded from previous slot, so we skip rent collection on it
         let result = later_bank.collect_rent_from_accounts(
             vec![(zero_lamport_pubkey, account, later_slot - 1)],
@@ -10377,9 +10340,9 @@ pub(crate) mod tests {
         bank.freeze();
         bank.squash();
         bank.force_flush_accounts_cache();
-        let hash = bank.update_accounts_hash();
+        let hash = bank.update_accounts_hash_for_tests();
         bank.clean_accounts_for_tests();
-        assert_eq!(bank.update_accounts_hash(), hash);
+        assert_eq!(bank.update_accounts_hash_for_tests(), hash);
 
         let bank0 = Arc::new(new_from_parent(&bank));
         let blockhash = bank.last_blockhash();
@@ -10400,9 +10363,9 @@ pub(crate) mod tests {
         assert_eq!(bank1.get_account(&keypair.pubkey()), None);
 
         info!("bank0 purge");
-        let hash = bank0.update_accounts_hash();
+        let hash = bank0.update_accounts_hash_for_tests();
         bank0.clean_accounts_for_tests();
-        assert_eq!(bank0.update_accounts_hash(), hash);
+        assert_eq!(bank0.update_accounts_hash_for_tests(), hash);
 
         assert_eq!(
             bank0.get_account(&keypair.pubkey()).unwrap().lamports(),
@@ -10428,7 +10391,7 @@ pub(crate) mod tests {
 
         bank1.freeze();
         bank1.squash();
-        bank1.update_accounts_hash();
+        bank1.update_accounts_hash_for_tests();
         assert!(bank1.verify_bank_hash(VerifyBankHash::default_for_test()));
 
         // keypair should have 0 tokens on both forks
@@ -11541,7 +11504,7 @@ pub(crate) mod tests {
         let pubkey2 = solana_sdk::pubkey::new_rand();
         info!("transfer 2 {}", pubkey2);
         bank2.transfer(amount, &mint_keypair, &pubkey2).unwrap();
-        bank2.update_accounts_hash();
+        bank2.update_accounts_hash_for_tests();
         assert!(bank2.verify_bank_hash(VerifyBankHash::default_for_test()));
     }
 
@@ -11566,18 +11529,18 @@ pub(crate) mod tests {
 
         // Checkpointing should never modify the checkpoint's state once frozen
         let bank0_state = bank0.hash_internal_state();
-        bank2.update_accounts_hash();
+        bank2.update_accounts_hash_for_tests();
         assert!(bank2.verify_bank_hash(VerifyBankHash::default_for_test()));
         let bank3 = Bank::new_from_parent(&bank0, &solana_sdk::pubkey::new_rand(), 2);
         assert_eq!(bank0_state, bank0.hash_internal_state());
         assert!(bank2.verify_bank_hash(VerifyBankHash::default_for_test()));
-        bank3.update_accounts_hash();
+        bank3.update_accounts_hash_for_tests();
         assert!(bank3.verify_bank_hash(VerifyBankHash::default_for_test()));
 
         let pubkey2 = solana_sdk::pubkey::new_rand();
         info!("transfer 2 {}", pubkey2);
         bank2.transfer(amount, &mint_keypair, &pubkey2).unwrap();
-        bank2.update_accounts_hash();
+        bank2.update_accounts_hash_for_tests();
         assert!(bank2.verify_bank_hash(VerifyBankHash::default_for_test()));
         assert!(bank3.verify_bank_hash(VerifyBankHash::default_for_test()));
     }
@@ -11602,7 +11565,7 @@ pub(crate) mod tests {
         )
         .unwrap();
         bank.freeze();
-        bank.update_accounts_hash();
+        bank.update_accounts_hash_for_tests();
         assert!(bank.verify_snapshot_bank(true, false, bank.slot()));
 
         // tamper the bank after freeze!
@@ -12787,11 +12750,11 @@ pub(crate) mod tests {
         );
 
         // Re-adding builtin programs should be no-op
-        bank.update_accounts_hash();
+        bank.update_accounts_hash_for_tests();
         let old_hash = bank.get_accounts_hash();
         bank.add_builtin("mock_program1", &vote_id, mock_ix_processor);
         bank.add_builtin("mock_program2", &stake_id, mock_ix_processor);
-        bank.update_accounts_hash();
+        bank.update_accounts_hash_for_tests();
         let new_hash = bank.get_accounts_hash();
         assert_eq!(old_hash, new_hash);
         {
@@ -14530,13 +14493,13 @@ pub(crate) mod tests {
             if bank.slot == 64 {
                 assert_eq!(
                     bank.hash().to_string(),
-                    "4u8bxZRLYdQBkWRBwmpcwcQVMCJoEpzY7hCuAzxr3kCe"
+                    "Ddk6ouAvSSA1U3Cw6BoKdM5v5LdRc9ShruGDzci9fKbY"
                 );
             }
             if bank.slot == 128 {
                 assert_eq!(
                     bank.hash().to_string(),
-                    "4c5F8UbcDD8FM7qXcfv6BPPo6nHNYJQmN5gHiCMTdEzX"
+                    "ANodC5vnedLWqeAyhcoErzR3ptNansb5YX6UTQ9cfP7S"
                 );
                 break;
             }
@@ -19223,18 +19186,9 @@ pub(crate) mod tests {
                 for loaded_slot in (bank_slot - 1)..=bank_slot {
                     for old_rent_epoch in account_rent_epoch.saturating_sub(1)..=account_rent_epoch
                     {
-                        let skip = Bank::skip_rewrite(
-                            bank_slot,
-                            rent_amount,
-                            loaded_slot,
-                            old_rent_epoch,
-                            &account,
-                        );
+                        let skip = Bank::skip_rewrite(rent_amount, &account);
                         let mut should_skip = true;
-                        if rent_amount != 0
-                            || account_rent_epoch == 0
-                            || (account_rent_epoch != old_rent_epoch && loaded_slot == bank_slot)
-                        {
+                        if rent_amount != 0 || account_rent_epoch == 0 {
                             should_skip = false;
                         }
                         assert_eq!(
@@ -19325,12 +19279,24 @@ pub(crate) mod tests {
         assert_eq!(
             inner_instructions,
             vec![
-                vec![CompiledInstruction::new_from_raw_parts(0, vec![1], vec![])],
+                vec![InnerInstruction {
+                    instruction: CompiledInstruction::new_from_raw_parts(0, vec![1], vec![]),
+                    stack_height: 2,
+                }],
                 vec![],
                 vec![
-                    CompiledInstruction::new_from_raw_parts(0, vec![4], vec![]),
-                    CompiledInstruction::new_from_raw_parts(0, vec![5], vec![]),
-                    CompiledInstruction::new_from_raw_parts(0, vec![6], vec![])
+                    InnerInstruction {
+                        instruction: CompiledInstruction::new_from_raw_parts(0, vec![4], vec![]),
+                        stack_height: 2,
+                    },
+                    InnerInstruction {
+                        instruction: CompiledInstruction::new_from_raw_parts(0, vec![5], vec![]),
+                        stack_height: 3,
+                    },
+                    InnerInstruction {
+                        instruction: CompiledInstruction::new_from_raw_parts(0, vec![6], vec![]),
+                        stack_height: 2,
+                    },
                 ]
             ]
         );
@@ -19883,7 +19849,6 @@ pub(crate) mod tests {
                 &keypair.pubkey(),
                 &mut account,
                 None,
-                true, // preserve_rent_epoch_for_rent_exempt_accounts
             );
             assert_eq!(info.account_data_len_reclaimed, data_size as u64);
         }
