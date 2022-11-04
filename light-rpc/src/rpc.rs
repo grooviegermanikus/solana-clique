@@ -75,6 +75,7 @@ pub fn forward_transaction_sender(
     alice: &Keypair,
     bob: &Keypair,
     lamports: u64,
+    num_transactions: u64,
 ) -> Vec<Signature> {
     let frompubkey = Signer::pubkey(alice);
     let topubkey = Signer::pubkey(bob);
@@ -85,7 +86,8 @@ pub fn forward_transaction_sender(
         .unwrap();
     let mut txs = vec![];
 
-    for i in 0..50 {
+    for i in 0..num_transactions {
+        //changing the lamports so that a new transactiion can be created each time
         let ix = system_instruction::transfer(&frompubkey, &topubkey, (lamports + i));
         let recent_blockhash = light_rpc
             .thin_client
@@ -174,7 +176,7 @@ mod tests {
 
         let lamports = 1_000_000;
 
-        let sig = forward_transaction_sender(&light_rpc, &alice, &bob, lamports);
+        let sig = forward_transaction_sender(&light_rpc, &alice, &bob, lamports, 100);
         let x = confirm_transaction_sender(&light_rpc, sig, 300);
         println!("{:#?}", x);
     }

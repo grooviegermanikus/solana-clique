@@ -25,24 +25,26 @@ struct Metrics {
     duration: u128,
 }
 
-fn test_forward_transaction_confirm_transaction(tps: u64) {
+fn test_forward_transaction_confirm_transaction(times: u64) {
     let light_rpc = LightRpc::new(
         RPC_ADDR.parse().unwrap(),
         TPU_ADDR.parse().unwrap(),
         CONNECTION_POOL_SIZE,
     );
-    let alice = Keypair::new();
-    let bob = Keypair::new();
 
     let lamports = 1_000_000;
     let mut data: Vec<Metrics> = vec![];
 
     let mut wtr = csv::Writer::from_path("metrics.csv").unwrap();
     let instant = SystemTime::now();
-    for _ in 0..tps {
+    for _ in 0..times {
+        //generating a new keypair for each transaction
+        let alice = Keypair::new();
+        let bob = Keypair::new();
         let start_time = instant.elapsed().unwrap().as_nanos();
 
-        let signatures = light_rpc::forward_transaction_sender(&light_rpc, &alice, &bob, lamports);
+        let signatures =
+            light_rpc::forward_transaction_sender(&light_rpc, &alice, &bob, lamports, 200);
         let confirmed = light_rpc::confirm_transaction_sender(&light_rpc, signatures, 300);
 
         let end_time = instant.elapsed().unwrap().as_nanos();
@@ -61,5 +63,5 @@ fn test_forward_transaction_confirm_transaction(tps: u64) {
 fn dummy() {}
 
 fn main() {
-    test_forward_transaction_confirm_transaction(100);
+    test_forward_transaction_confirm_transaction(10);
 }
