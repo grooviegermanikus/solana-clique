@@ -1,4 +1,3 @@
-#[cfg(test)]
 use {
     light_rpc::LightRpc,
     solana_sdk::{
@@ -8,9 +7,8 @@ use {
     std::{thread, time::Duration},
 };
 
-const RPC_ADDR: &str = "127.0.0.1:8899";
-const TPU_ADDR: &str = "0.0.0.0:1027";
-const CONNECTION_POOL_SIZE: usize = 1;
+const RPC_URL: &str = "http://127.0.0.1:8899";
+const WS_URL: &str = "ws://127.0.0.1:8900";
 const NUM_KEYPAIRS: u64 = 16;
 const RENT_EXEMPT_MINIMUM: u64 = 890_880;
 const LAMPORTS_PER_TX: u64 = 5_000;
@@ -21,32 +19,28 @@ struct Metrics {
     forward_start_time: u128,
     #[serde(rename = "end forward transaction time(ms)")]
     forward_end_time: u128,
-    #[serde(rename = "Forward transaction duration(ms)")]
-    forward_duration: u128,
     #[serde(rename = "start confirm transaction time(ms)")]
     confirm_start_time: u128,
     #[serde(rename = "end confirm transaction time(ms)")]
     confirm_end_time: u128,
+    #[serde(rename = "Forward transaction duration(ms)")]
+    forward_duration: u128,
     #[serde(rename = "Confirm transaction duration(ms)")]
     confirm_duration: u128,
     #[serde(rename = "Total duration(ms)")]
     duration: u128,
 }
 
-fn test_forward_transaction_confirm_transaction(times: u64) {
-    let light_rpc = LightRpc::new(
-        RPC_ADDR.parse().unwrap(),
-        TPU_ADDR.parse().unwrap(),
-        CONNECTION_POOL_SIZE,
-    );
+async fn test_forward_transaction_confirm_transaction(times: u64) {
+    let light_rpc = LightRpc::new(RPC_URL.to_owned(), WS_URL.to_owned()).await;
 
     let mut keypairs: Vec<Keypair> = vec![];
     for _ in 0..NUM_KEYPAIRS {
         let k = Keypair::new();
         let signature = light_rpc
-            .thin_client
-            .rpc_client()
+            .rpc_client
             .request_airdrop(&k.pubkey(), RENT_EXEMPT_MINIMUM + LAMPORTS_PER_TX * times)
+            .await
             .unwrap();
         println!(
             "airdrop keypair:{} signature:{}",
@@ -56,16 +50,16 @@ fn test_forward_transaction_confirm_transaction(times: u64) {
         keypairs.push(k);
     }
 
-    println!("wait 30 seconds to start benchmark");
-    thread::sleep(Duration::from_secs(30));
+    println!("wait 10 seconds to start benchmark");
+    thread::sleep(Duration::from_secs(10));
 
     let mut metrics: Vec<Metrics> = vec![];
     let instant = SystemTime::now();
     for _ in 0..times {
         let recent_blockhash = light_rpc
-            .thin_client
-            .rpc_client()
+            .rpc_client
             .get_latest_blockhash()
+            .await
             .expect("Failed to get latest blockhash.");
 
         println!("new blockhash:{}", recent_blockhash);
@@ -83,21 +77,17 @@ fn test_forward_transaction_confirm_transaction(times: u64) {
             txs.push(tx);
         }
 
-        // forward whole batch
+        println!("forward batch");
         let forward_start_time = instant.elapsed().unwrap().as_millis();
-        let signatures = light_rpc
-            .forward_transactions(txs)
-            .into_iter()
-            .map(|p| p.unwrap())
-            .collect();
+        let signatures = light_rpc.forward_transactions(txs).await;
         let forward_end_time = instant.elapsed().unwrap().as_millis();
 
-        // confirm whole bactch
+        println!("confirm batch");
         let confirm_start_time = instant.elapsed().unwrap().as_millis();
-        let _confirmed = light_rpc::confirm_transaction_sender(&light_rpc, signatures, 300);
+        let _confirmed = light_rpc::confirm_transaction_sender(&light_rpc, signatures, 300).await;
         let confirm_end_time = instant.elapsed().unwrap().as_millis();
 
-        // collect metrics
+        println!("collect metrics");
         let forward_duration = forward_end_time - forward_start_time;
         let confirm_duration = confirm_end_time - confirm_start_time;
         metrics.push(Metrics {
@@ -118,9 +108,8 @@ fn test_forward_transaction_confirm_transaction(times: u64) {
         wtr.serialize(d).unwrap();
     }
 }
-#[test]
-fn dummy() {}
 
-fn main() {
-    test_forward_transaction_confirm_transaction(8);
+#[tokio::main]
+async fn main() {
+    test_forward_transaction_confirm_transaction(8).await;
 }

@@ -33,6 +33,8 @@ members = [
     "keygen",
     "ledger",
     "ledger-tool",
+    "light-rpc",
+    "light-rpc-bench",
     "local-cluster",
     "log-analyzer",
     "logger",
@@ -95,7 +97,6 @@ members = [
     "version",
     "watchtower",
     "zk-token-sdk",
-    "light-rpc"
 ]
 
 exclude = [

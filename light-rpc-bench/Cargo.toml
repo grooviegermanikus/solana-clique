@@ -1,13 +1,15 @@
 [package]
-name = "light-rpc"
+name = "light-rpc-bench"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 solana-client={path = "../client"}
 solana-sdk={path = "../sdk"}
+light-rpc={path = "../light-rpc"}
 tokio = { version = "1.14.1", features = ["full"]}
 rayon = "1.5"
 futures = "0.3.25"
-
+csv = "1.1.6"
+serde = { version = "1", features = ["derive"]}
 

@@ -1,0 +1,9 @@
+start forward transaction time(ms),end forward transaction time(ms),start confirm transaction time(ms),end confirm transaction time(ms),Forward transaction duration(ms),Confirm transaction duration(ms),Total duration(ms)
+7,22,22,256,15,234,249
+260,263,263,726,3,463,466
+730,733,733,1205,3,472,475
+1209,1211,1211,1686,2,475,477
+1690,1692,1692,2168,2,476,478
+2172,2174,2174,2645,2,471,473
+2649,2652,2652,3125,3,473,476
+3129,3131,3131,3597,2,466,468
