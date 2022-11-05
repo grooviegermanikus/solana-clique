@@ -1,20 +1,18 @@
 #[cfg(test)]
 use {
     light_rpc::LightRpc,
-    solana_sdk::commitment_config::CommitmentConfig,
-    solana_sdk::signature::Signature,
     solana_sdk::{
-        native_token::LAMPORTS_PER_SOL, signature::Signer, signer::keypair::Keypair,
-        system_instruction, transaction::Transaction,
+        signature::Signer, signer::keypair::Keypair, system_instruction, transaction::Transaction,
     },
-    std::time::SystemTime,
+    std::time::*,
     std::{thread, time::Duration},
 };
 
 const RPC_ADDR: &str = "127.0.0.1:8899";
-const TPU_ADDR: &str = "127.0.0.1:1027";
+const TPU_ADDR: &str = "0.0.0.0:1027";
 const CONNECTION_POOL_SIZE: usize = 1;
-const NUM_KEYPAIRS: u64 = 64;
+const NUM_KEYPAIRS: u64 = 16;
+const RENT_EXEMPT_MINIMUM: u64 = 890_880;
 const LAMPORTS_PER_TX: u64 = 5_000;
 
 #[derive(serde::Serialize)]
@@ -45,13 +43,21 @@ fn test_forward_transaction_confirm_transaction(times: u64) {
     let mut keypairs: Vec<Keypair> = vec![];
     for _ in 0..NUM_KEYPAIRS {
         let k = Keypair::new();
-        light_rpc
+        let signature = light_rpc
             .thin_client
             .rpc_client()
-            .request_airdrop(&k.pubkey(), LAMPORTS_PER_TX * times)
+            .request_airdrop(&k.pubkey(), RENT_EXEMPT_MINIMUM + LAMPORTS_PER_TX * times)
             .unwrap();
+        println!(
+            "airdrop keypair:{} signature:{}",
+            k.pubkey().to_string(),
+            signature.to_string()
+        );
         keypairs.push(k);
     }
+
+    println!("wait 30 seconds to start benchmark");
+    thread::sleep(Duration::from_secs(30));
 
     let mut metrics: Vec<Metrics> = vec![];
     let instant = SystemTime::now();
@@ -61,6 +67,8 @@ fn test_forward_transaction_confirm_transaction(times: u64) {
             .rpc_client()
             .get_latest_blockhash()
             .expect("Failed to get latest blockhash.");
+
+        println!("new blockhash:{}", recent_blockhash);
 
         // pre-create transactions to avoid signature costs
         let mut txs = vec![];
@@ -86,7 +94,7 @@ fn test_forward_transaction_confirm_transaction(times: u64) {
 
         // confirm whole bactch
         let confirm_start_time = instant.elapsed().unwrap().as_millis();
-        let confirmed = light_rpc::confirm_transaction_sender(&light_rpc, signatures, 300);
+        let _confirmed = light_rpc::confirm_transaction_sender(&light_rpc, signatures, 300);
         let confirm_end_time = instant.elapsed().unwrap().as_millis();
 
         // collect metrics
@@ -104,6 +112,7 @@ fn test_forward_transaction_confirm_transaction(times: u64) {
     }
 
     // save metrics in file
+    println!("saving metrics to metrics.csv");
     let mut wtr = csv::Writer::from_path("metrics.csv").unwrap();
     for d in metrics.into_iter() {
         wtr.serialize(d).unwrap();
@@ -113,5 +122,5 @@ fn test_forward_transaction_confirm_transaction(times: u64) {
 fn dummy() {}
 
 fn main() {
-    test_forward_transaction_confirm_transaction(10);
+    test_forward_transaction_confirm_transaction(8);
 }
