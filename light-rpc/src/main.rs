@@ -1,83 +1,44 @@
+use bincode::de;
 use lite_rpc::Lite;
-use solana_client::{thin_client::ThinClient, rpc_client, tpu_client::TpuClientConfig};
+use rayon::ThreadBuilder;
+use solana_client::{rpc_client, thin_client::ThinClient, tpu_client::TpuClientConfig};
+use solana_pubsub_client::pubsub_client::{
+    BlockSubscription, PubsubBlockClientSubscription, PubsubClient,
+};
 use solana_sdk::client::AsyncClient;
+use std::thread::{Builder, JoinHandle};
 
 use {
-    solana_client::{rpc_client::RpcClient, rpc_config::RpcBlockConfig,
-        tpu_client::TpuClient,
-    },
     bincode::{config::Options, serialize},
-    crossbeam_channel::{unbounded, Receiver, Sender},
-    jsonrpc_core::{futures::future, types::error, BoxFuture, Error, Metadata, Result, MetaIoHandler},
-    jsonrpc_derive::rpc,
-    serde::{Deserialize, Serialize},
-    
-    solana_entry::entry::Entry,
-    solana_faucet::faucet::request_airdrop_transaction,
-    solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
-    solana_ledger::{
-        blockstore::{Blockstore, SignatureInfosForAddress},
-        blockstore_db::BlockstoreError,
-        get_tmp_ledger_path,
-        leader_schedule_cache::LeaderScheduleCache,
+    crossbeam_channel::{Receiver, Sender},
+    jsonrpc_core::{
+        futures::future, types::error, BoxFuture, Error, MetaIoHandler, Metadata, Result,
     },
+    jsonrpc_derive::rpc,
+    jsonrpc_http_server::{
+        hyper, AccessControlAllowOrigin, CloseHandle, DomainsValidation, RequestMiddleware,
+        RequestMiddlewareAction, ServerBuilder,
+    },
+    serde::{Deserialize, Serialize},
+    solana_client::{rpc_client::RpcClient, rpc_config::RpcBlockConfig, tpu_client::TpuClient},
     solana_perf::packet::PACKET_DATA_SIZE,
     solana_rpc_client_api::{
         config::*,
         custom_error::RpcCustomError,
-        deprecated_config::*,
-        filter::{Memcmp, MemcmpEncodedBytes, RpcFilterType},
-        request::{
-            TokenAccountsFilter, DELINQUENT_VALIDATOR_SLOT_DISTANCE,
-            MAX_GET_CONFIRMED_BLOCKS_RANGE, MAX_GET_CONFIRMED_SIGNATURES_FOR_ADDRESS2_LIMIT,
-            MAX_GET_CONFIRMED_SIGNATURES_FOR_ADDRESS_SLOT_RANGE, MAX_GET_PROGRAM_ACCOUNT_FILTERS,
-            MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS, MAX_GET_SLOT_LEADERS, MAX_MULTIPLE_ACCOUNTS,
-            MAX_RPC_VOTE_ACCOUNT_INFO_EPOCH_CREDITS_HISTORY, NUM_LARGEST_ACCOUNTS,
-        },
+        filter::RpcFilterType,
         response::{Response as RpcResponse, *},
     },
-    solana_runtime::{
-        accounts::AccountAddressFilter,
-        accounts_index::{AccountIndex, AccountSecondaryIndexes, IndexKey, ScanConfig},
-        bank::{Bank, TransactionSimulationResult},
-        bank_forks::BankForks,
-        commitment::{BlockCommitmentArray, BlockCommitmentCache, CommitmentSlots},
-        inline_spl_token::{SPL_TOKEN_ACCOUNT_MINT_OFFSET, SPL_TOKEN_ACCOUNT_OWNER_OFFSET},
-        inline_spl_token_2022::{self, ACCOUNTTYPE_ACCOUNT},
-        non_circulating_supply::calculate_non_circulating_supply,
-        prioritization_fee_cache::PrioritizationFeeCache,
-        snapshot_config::SnapshotConfig,
-        snapshot_utils,
-    },
     solana_sdk::{
-        account::{AccountSharedData, ReadableAccount},
-        account_utils::StateMut,
         clock::{Slot, UnixTimestamp, MAX_RECENT_BLOCKHASHES},
         commitment_config::{CommitmentConfig, CommitmentLevel},
-        epoch_info::EpochInfo,
-        epoch_schedule::EpochSchedule,
         exit::Exit,
-        feature_set,
         fee_calculator::FeeCalculator,
         hash::Hash,
         message::SanitizedMessage,
         pubkey::{Pubkey, PUBKEY_BYTES},
-        signature::{Keypair, Signature, Signer},
-        stake::state::{StakeActivationStatus, StakeState},
-        stake_history::StakeHistory,
-        system_instruction,
-        sysvar::stake_history,
-        transaction::{
-            self, AddressLoader, MessageHash, SanitizedTransaction, TransactionError,
-            VersionedTransaction, MAX_TX_ACCOUNT_LOCKS,
-        },
+        signature::Signature,
+        transaction::VersionedTransaction,
     },
-    solana_send_transaction_service::{
-        send_transaction_service::{SendTransactionService, TransactionInfo},
-        tpu_info::NullTpuInfo,
-    },
-    solana_stake_program,
-    solana_storage_bigtable::Error as StorageError,
     solana_streamer::socket::SocketAddrSpace,
     solana_tpu_client::connection_cache::ConnectionCache,
     solana_transaction_status::{
@@ -85,12 +46,6 @@ use {
         ConfirmedTransactionWithStatusMeta, EncodedConfirmedTransactionWithStatusMeta, Reward,
         RewardType, TransactionBinaryEncoding, TransactionConfirmationStatus, TransactionStatus,
         UiConfirmedBlock, UiTransactionEncoding,
-    },
-    solana_vote_program::vote_state::{VoteState, MAX_LOCKOUT_HISTORY},
-    spl_token_2022::{
-        extension::StateWithExtensions,
-        solana_program::program_pack::Pack,
-        state::{Account as TokenAccount, Mint},
     },
     std::{
         any::type_name,
@@ -105,45 +60,199 @@ use {
         },
         time::Duration,
     },
-    jsonrpc_http_server::{
-        hyper, AccessControlAllowOrigin, CloseHandle, DomainsValidation, RequestMiddleware,
-        RequestMiddlewareAction, ServerBuilder,
-    },
 };
 
 use solana_perf::thread::renice_this_thread;
 mod cli;
 
 #[derive(Clone)]
-pub struct LightRpcRequestProcessor{
-    pub rpc_client : Arc<RpcClient>,
-    pub tpu_client : Arc<TpuClient>,
-    pub last_valid_block_height : u64,
-    pub ws_url : String,
+pub struct LightRpcRequestProcessor {
+    pub rpc_client: Arc<RpcClient>,
+    pub tpu_client: Arc<TpuClient>,
+    pub last_valid_block_height: u64,
+    pub ws_url: String,
+    connection_cache: Arc<ConnectionCache>,
+    pub current_slot: u64,
+    pub signature_status: Arc<RwLock<HashMap<String, Option<CommitmentLevel>>>>,
+    pub subscribed_clients: Arc<Vec<PubsubBlockClientSubscription>>,
+    pub confirmation_slot: Arc<AtomicU64>,
+    pub finalized_slot: Arc<AtomicU64>,
+    joinables: Arc<Vec<JoinHandle<()>>>,
 }
 
 impl LightRpcRequestProcessor {
-    pub fn new(json_rpc_url : &String, websocket_url : &String) -> LightRpcRequestProcessor{
-
+    pub fn new(
+        json_rpc_url: &String,
+        websocket_url: &String,
+        pubsub_addr: SocketAddr,
+    ) -> LightRpcRequestProcessor {
         let rpc_client = Arc::new(RpcClient::new(json_rpc_url.as_str()));
-        let tpu_client = Arc::new(TpuClient::new(rpc_client.clone(), websocket_url.as_str(), TpuClientConfig::default()).unwrap());
-        
-        LightRpcRequestProcessor{
+        let connection_cache = Arc::new(ConnectionCache::default());
+        let tpu_client = Arc::new(
+            TpuClient::new_with_connection_cache(
+                rpc_client.clone(),
+                websocket_url.as_str(),
+                TpuClientConfig::default(),
+                connection_cache.clone(),
+            )
+            .unwrap(),
+        );
+
+        let current_slot = rpc_client.get_slot().unwrap();
+
+        // subscribe for confirmed_blocks
+        let (mut client_confirmed, receiver_confirmed) = PubsubClient::block_subscribe(
+            websocket_url.as_str(),
+            RpcBlockSubscribeFilter::All,
+            Some(RpcBlockSubscribeConfig {
+                commitment: Some(CommitmentConfig {
+                    commitment: CommitmentLevel::Confirmed,
+                }),
+                encoding: None,
+                transaction_details: Some(
+                    solana_transaction_status::TransactionDetails::Signatures,
+                ),
+                show_rewards: None,
+                max_supported_transaction_version: None,
+            }),
+        )
+        .unwrap();
+
+        // subscribe for finalized blocks
+        let (mut client_finalized, receiver_finalized) = PubsubClient::block_subscribe(
+            websocket_url.as_str(),
+            RpcBlockSubscribeFilter::All,
+            Some(RpcBlockSubscribeConfig {
+                commitment: Some(CommitmentConfig {
+                    commitment: CommitmentLevel::Finalized,
+                }),
+                encoding: None,
+                transaction_details: Some(
+                    solana_transaction_status::TransactionDetails::Signatures,
+                ),
+                show_rewards: None,
+                max_supported_transaction_version: None,
+            }),
+        )
+        .unwrap();
+
+        let mut joinables = Vec::new();
+        let signature_status = Arc::new(RwLock::new(HashMap::new()));
+
+        let confirmation_slot = rpc_client
+            .get_slot_with_commitment(CommitmentConfig {
+                commitment: CommitmentLevel::Confirmed,
+            })
+            .unwrap();
+        let finalized_slot = rpc_client
+            .get_slot_with_commitment(CommitmentConfig {
+                commitment: CommitmentLevel::Finalized,
+            })
+            .unwrap();
+
+        let confirmation_slot = Arc::new(AtomicU64::new(confirmation_slot));
+        let finalized_slot = Arc::new(AtomicU64::new(finalized_slot));
+
+        // start thread which will listen to confirmed blocks
+        {
+            let signature_status = signature_status.clone();
+            let confirmation_slot = confirmation_slot.clone();
+            let finalized_slot = finalized_slot.clone();
+            let join_handle = Builder::new()
+                .name("thread working on confirmation block".to_string())
+                .spawn(move || {
+                    Self::process_block(
+                        receiver_confirmed,
+                        signature_status,
+                        CommitmentLevel::Confirmed,
+                        confirmation_slot,
+                    );
+                })
+                .unwrap();
+            joinables.push(join_handle);
+        }
+        // start thread which will listen to finalized blocks
+        {
+            let signature_status = signature_status.clone();
+            let confirmation_slot = confirmation_slot.clone();
+            let finalized_slot = finalized_slot.clone();
+            let join_handle = Builder::new()
+                .name("thread working on finalized block".to_string())
+                .spawn(move || {
+                    Self::process_block(
+                        receiver_finalized,
+                        signature_status,
+                        CommitmentLevel::Finalized,
+                        finalized_slot,
+                    );
+                })
+                .unwrap();
+            joinables.push(join_handle);
+        }
+
+        LightRpcRequestProcessor {
             rpc_client,
             tpu_client,
-            last_valid_block_height : 0,   
-            ws_url : websocket_url.clone(), 
+            last_valid_block_height: 0,
+            ws_url: websocket_url.clone(),
+            current_slot,
+            signature_status,
+            connection_cache: connection_cache,
+            subscribed_clients: Arc::new(vec![client_confirmed, client_finalized]),
+            joinables: Arc::new(joinables),
+            confirmation_slot: confirmation_slot,
+            finalized_slot: finalized_slot,
         }
     }
+
+    fn process_block(
+        reciever: Receiver<RpcResponse<RpcBlockUpdate>>,
+        signature_status: Arc<RwLock<HashMap<String, Option<CommitmentLevel>>>>,
+        commitment: CommitmentLevel,
+        updated_slot: Arc<AtomicU64>,
+    ) {
+        let mut last_update_slot: u64 = 0;
+        loop {
+            let block_data = reciever.recv();
+
+            match block_data {
+                Ok(data) => {
+                    let blockUpdate = data.value;
+                    last_update_slot = blockUpdate.slot;
+                    updated_slot.swap(last_update_slot, Ordering::Relaxed);
+                    if let Some(block) = blockUpdate.block {
+                        if let Some(signatures) = block.signatures {
+                            let mut lock = signature_status.write().unwrap();
+                            for signature in signatures {
+                                if lock.contains_key(&signature) {
+                                    println!("found signature {}", signature);
+                                    lock.insert(signature, Some(commitment));
+                                }
+                            }
+                        } else {
+                            println!(
+                                "Cannot get signatures at slot {} block hash {}",
+                                last_update_slot,
+                                block.blockhash,
+                            );
+                        }
+                    } else {
+                        println!("Cannot get a block at slot {}", last_update_slot);
+                    }
+                }
+                Err(_) => {
+                    break;
+                }
+            }
+        }
+    }
+
 }
 
 impl Metadata for LightRpcRequestProcessor {}
 
 pub mod lite_rpc {
-    use {
-        super::*,
-        solana_sdk::message::{VersionedMessage},
-    };
+    use {super::*, solana_sdk::message::VersionedMessage};
     #[rpc]
     pub trait Lite {
         type Metadata;
@@ -163,18 +272,24 @@ pub mod lite_rpc {
             commitment: Option<CommitmentConfig>,
         ) -> Result<RpcResponse<RpcBlockhashFeeCalculator>>;
 
+        #[rpc(meta, name = "confirmTransaction")]
+        fn confirm_transaction(
+            &self,
+            meta: Self::Metadata,
+            signature_str: String,
+            commitment: Option<CommitmentConfig>,
+        ) -> Result<RpcResponse<bool>>;
     }
     pub struct LightRpc;
     impl Lite for LightRpc {
         type Metadata = LightRpcRequestProcessor;
 
         fn send_transaction(
-                &self,
-                meta: Self::Metadata,
-                data: String,
-                config: Option<RpcSendTransactionConfig>,
-            ) -> Result<String> {
-
+            &self,
+            meta: Self::Metadata,
+            data: String,
+            config: Option<RpcSendTransactionConfig>,
+        ) -> Result<String> {
             let RpcSendTransactionConfig {
                 skip_preflight,
                 preflight_commitment,
@@ -192,11 +307,12 @@ pub mod lite_rpc {
             let (wire_transaction, transaction) =
                 decode_and_deserialize::<VersionedTransaction>(data.clone(), binary_encoding)?;
 
-            if !meta.tpu_client.send_wire_transaction(wire_transaction.clone()) {
-                // issue in transport layer / reset TPU client
-                let tpu_client = TpuClient::new(meta.rpc_client, meta.ws_url.as_str(), TpuClientConfig::default()).unwrap();
-                tpu_client.send_wire_transaction(wire_transaction);
+            {
+                let mut lock = meta.signature_status.write().unwrap();
+                lock.insert(transaction.signatures[0].to_string(), None);
             }
+            meta.tpu_client
+                .send_wire_transaction(wire_transaction.clone());
             Ok(transaction.signatures[0].to_string())
         }
 
@@ -206,19 +322,75 @@ pub mod lite_rpc {
             commitment: Option<CommitmentConfig>,
         ) -> Result<RpcResponse<RpcBlockhashFeeCalculator>> {
             let recent_block_hash = meta.rpc_client.get_latest_blockhash().unwrap();
-            let lamport_per_signature = meta.rpc_client.get_fee_calculator_for_blockhash(&recent_block_hash).unwrap();
-            let slot  = meta.rpc_client.get_slot().unwrap();
-            Ok(
-                RpcResponse {
-                    context: RpcResponseContext::new(slot),
-                    value : RpcBlockhashFeeCalculator {
-                        blockhash: recent_block_hash.to_string(),
-                        fee_calculator: lamport_per_signature.unwrap(),
-                    },
-                }
-            )
+            let lamport_per_signature = meta
+                .rpc_client
+                .get_fee_calculator_for_blockhash(&recent_block_hash)
+                .unwrap();
+            let slot = meta.rpc_client.get_slot().unwrap();
+            Ok(RpcResponse {
+                context: RpcResponseContext::new(slot),
+                value: RpcBlockhashFeeCalculator {
+                    blockhash: recent_block_hash.to_string(),
+                    fee_calculator: lamport_per_signature.unwrap(),
+                },
+            })
         }
 
+        fn confirm_transaction(
+            &self,
+            meta: Self::Metadata,
+            signature_str: String,
+            commitment_cfg: Option<CommitmentConfig>,
+        ) -> Result<RpcResponse<bool>> {
+            let lock = meta.signature_status.read().unwrap();
+            let k_value = lock.get_key_value(&signature_str);
+            let commitment = match commitment_cfg {
+                Some(x) => x.commitment,
+                None => CommitmentLevel::Confirmed,
+            };
+            let confirmed_slot = meta.confirmation_slot.load(Ordering::Relaxed);
+            let finalized_slot = meta.finalized_slot.load(Ordering::Relaxed);
+
+            match k_value {
+                Some(value) => match value.1 {
+                    Some(commitmentForSignature) => {
+                        let slot = if commitment == CommitmentLevel::Finalized {
+                            finalized_slot
+                        } else {
+                            confirmed_slot
+                        };
+                        println!("found in cache");
+                        return Ok(RpcResponse {
+                            context: RpcResponseContext::new(slot),
+                            value: if commitment.eq(&CommitmentLevel::Finalized) {
+                                commitmentForSignature.eq(&CommitmentLevel::Finalized)
+                            } else {
+                                commitmentForSignature.eq(&CommitmentLevel::Finalized)
+                                    || commitmentForSignature.eq(&CommitmentLevel::Confirmed)
+                            },
+                        });
+                    }
+                    None => {
+                        return Ok(RpcResponse {
+                            context: RpcResponseContext::new(confirmed_slot),
+                            value: false,
+                        })
+                    }
+                },
+                None => {
+                    let signature = Signature::from_str(signature_str.as_str()).unwrap();
+                    let ans = match commitment_cfg {
+                        None => meta.rpc_client.confirm_transaction(&signature).unwrap(),
+                        Some(cfg) => meta.rpc_client.confirm_transaction_with_commitment(&signature, cfg).unwrap().value
+                    };
+                    return Ok(RpcResponse{
+                        context: RpcResponseContext::new(confirmed_slot),
+                        value : ans
+                    })
+                },
+            };
+            
+        }
     }
 }
 
@@ -284,7 +456,6 @@ where
 }
 
 pub fn main() {
-
     let matches = cli::build_args(solana_version::version!()).get_matches();
     let cli_config = cli::extract_args(&matches);
 
@@ -292,6 +463,7 @@ pub fn main() {
         json_rpc_url,
         websocket_url,
         rpc_addr,
+        subsription_port,
         ..
     } = &cli_config;
 
@@ -299,7 +471,8 @@ pub fn main() {
     let lite_rpc = lite_rpc::LightRpc;
     io.extend_with(lite_rpc.to_delegate());
 
-    let request_processor = LightRpcRequestProcessor::new(json_rpc_url, websocket_url);
+    let request_processor =
+        LightRpcRequestProcessor::new(json_rpc_url, websocket_url, subsription_port.clone());
 
     let runtime = Arc::new(
         tokio::runtime::Builder::new_multi_thread()
@@ -313,10 +486,10 @@ pub fn main() {
     let max_request_body_size: usize = 50 * (1 << 10);
     let socket_addr = rpc_addr.clone();
 
-    let server = ServerBuilder::with_meta_extractor(
-            io,
-            move |_req: &hyper::Request<hyper::Body>| request_processor.clone(),
-        )
+    let server =
+        ServerBuilder::with_meta_extractor(io, move |_req: &hyper::Request<hyper::Body>| {
+            request_processor.clone()
+        })
         .event_loop_executor(runtime.handle().clone())
         .threads(1)
         .cors(DomainsValidation::AllowOnly(vec![
@@ -327,5 +500,4 @@ pub fn main() {
         .start_http(&socket_addr);
     println!("Starting Lite RPC node");
     server.unwrap().wait();
-    
 }
