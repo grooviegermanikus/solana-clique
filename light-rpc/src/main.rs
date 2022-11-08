@@ -100,6 +100,7 @@ impl LightRpcRequestProcessor {
 
         let current_slot = rpc_client.get_slot().unwrap();
 
+        println!("ws connection to {}", websocket_url);
         // subscribe for confirmed_blocks
         let (mut client_confirmed, receiver_confirmed) = PubsubClient::block_subscribe(
             websocket_url.as_str(),
@@ -211,6 +212,7 @@ impl LightRpcRequestProcessor {
         commitment: CommitmentLevel,
         updated_slot: Arc<AtomicU64>,
     ) {
+        println!("processing blocks for {}", commitment.to_string());
         let mut last_update_slot: u64 = 0;
         loop {
             let block_data = reciever.recv();
@@ -221,12 +223,12 @@ impl LightRpcRequestProcessor {
                     last_update_slot = blockUpdate.slot;
                     updated_slot.swap(last_update_slot, Ordering::Relaxed);
                     if let Some(block) = blockUpdate.block {
-                        if let Some(signatures) = block.signatures {
+                        if let Some(signatures) = &block.signatures {
                             let mut lock = signature_status.write().unwrap();
                             for signature in signatures {
-                                if lock.contains_key(&signature) {
-                                    println!("found signature {}", signature);
-                                    lock.insert(signature, Some(commitment));
+                                if lock.contains_key(signature) {
+                                    println!("found signature {} for commitment {}", signature, commitment);
+                                    lock.insert(signature.clone(), Some(commitment));
                                 }
                             }
                         } else {
@@ -240,11 +242,12 @@ impl LightRpcRequestProcessor {
                         println!("Cannot get a block at slot {}", last_update_slot);
                     }
                 }
-                Err(_) => {
-                    break;
+                Err(e) => {
+                    println!("Got error when recieving the block ({})", e.to_string());
                 }
             }
         }
+        println!("stopped processing blocks for {}", commitment.to_string());
     }
 
 }
@@ -310,6 +313,7 @@ pub mod lite_rpc {
             {
                 let mut lock = meta.signature_status.write().unwrap();
                 lock.insert(transaction.signatures[0].to_string(), None);
+                println!("added {} to map", transaction.signatures[0].to_string());
             }
             meta.tpu_client
                 .send_wire_transaction(wire_transaction.clone());
@@ -501,3 +505,80 @@ pub fn main() {
     println!("Starting Lite RPC node");
     server.unwrap().wait();
 }
+
+
+
+// #[cfg(test)]
+// mod tests {
+//     use {
+//         super::*,
+//         solana_sdk::{
+//             native_token::LAMPORTS_PER_SOL, signature::Signer, signer::keypair::Keypair,
+//             system_instruction, transaction::Transaction,
+//         },
+//         std::{thread, time::Duration},
+//     };
+
+//     const RPC_ADDR: &str = "http://127.0.0.1:8899";
+//     const WS_ADDR : &str = "ws://127.0.0.1:8900";
+//     const LITE_RPC_PORT : SocketAddr = SocketAddr::from(([127,0,0,1], 10800));
+
+//     const SUBSCRIPTION_RPC_PORT : SocketAddr = SocketAddr::from(([127,0,0,1], 10801));
+
+//     fn start() {
+//         let mut io = MetaIoHandler::default();
+//         let lite_rpc = lite_rpc::LightRpc;
+//         io.extend_with(lite_rpc.to_delegate());
+
+//         let request_processor =
+//             LightRpcRequestProcessor::new(&RPC_ADDR.to_string(), &WS_ADDR.to_string(), SUBSCRIPTION_RPC_PORT.clone());
+
+//         let runtime = Arc::new(
+//             tokio::runtime::Builder::new_multi_thread()
+//                 .worker_threads(1)
+//                 .on_thread_start(move || renice_this_thread(0).unwrap())
+//                 .thread_name("solRpcEl")
+//                 .enable_all()
+//                 .build()
+//                 .expect("Runtime"),
+//         );
+//         let max_request_body_size: usize = 50 * (1 << 10);
+//         let socket_addr = LITE_RPC_PORT.clone();
+
+//         let server =
+//             ServerBuilder::with_meta_extractor(io, move |_req: &hyper::Request<hyper::Body>| {
+//                 request_processor.clone()
+//             })
+//             .event_loop_executor(runtime.handle().clone())
+//             .threads(1)
+//             .cors(DomainsValidation::AllowOnly(vec![
+//                 AccessControlAllowOrigin::Any,
+//             ]))
+//             .cors_max_age(86400)
+//             .max_request_body_size(max_request_body_size)
+//             .start_http(&socket_addr);
+//         server.unwrap().wait();
+
+//     }
+
+//     // Should start rpc with the following configuration enabled for the moment `--rpc-pubsub-enable-block-subscription`
+//     #[test]
+//     fn initialize_light_rpc_http_sever() {
+//         Builder::new().name("Server".to_string()).spawn(|| {
+//             start();
+//         })
+//     }
+//     #[test]
+//     fn test_forward_transaction_confirm_transaction() {
+        
+
+//         let alice = Keypair::new();
+//         let bob = Keypair::new();
+
+//         let lamports = 1_000_000;
+
+//         let sig = forward_transaction_sender(&light_rpc, lamports, 100);
+//         let x = confirm_transaction_sender(&light_rpc, sig, 300);
+//         println!("{:#?}", x);
+//     }
+// }

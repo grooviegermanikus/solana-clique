@@ -2554,6 +2554,7 @@ dependencies = [
  "solana-metrics",
  "solana-perf",
  "solana-poh",
+ "solana-pubsub-client",
  "solana-rayon-threadlimit",
  "solana-rpc",
  "solana-rpc-client-api",
