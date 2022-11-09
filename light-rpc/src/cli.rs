@@ -9,7 +9,7 @@ use {
 /// Holds the configuration for a single run of the benchmark
 pub struct Config {
     pub rpc_addr: SocketAddr,
-    pub subsription_port: SocketAddr,
+    pub subscription_port: SocketAddr,
     pub json_rpc_url: String,
     pub websocket_url: String,
 }
@@ -20,7 +20,7 @@ impl Default for Config {
             rpc_addr: SocketAddr::from(([127, 0, 0, 1], 8899)),
             json_rpc_url: ConfigInput::default().json_rpc_url,
             websocket_url: ConfigInput::default().websocket_url,
-            subsription_port : SocketAddr::from(([127, 0, 0, 1], 8901)),
+            subscription_port : SocketAddr::from(([127, 0, 0, 1], 8900)),
         }
     }
 }
@@ -58,15 +58,17 @@ pub fn build_args<'a, 'b>(version: &'b str) -> App<'a, 'b> {
                 .short("p")
                 .takes_value(true)
                 .global(true)
+                .min_values(1025)
                 .help("Port on which which lite rpc will listen to rpc requests"),
         )
         .arg(
-            Arg::with_name("subsription_port")
+            Arg::with_name("subscription_port")
                 .long("sub_port")
                 .short("sp")
                 .takes_value(true)
                 .global(true)
-                .help("subsription port on which which lite rpc will use to create subscriptions")
+                .min_values(1025)
+                .help("subscription port on which which lite rpc will use to create subscriptions")
         )
 }
 
@@ -98,7 +100,9 @@ pub fn extract_args(matches: &ArgMatches) -> Config {
 
     if let Some(port) = matches.value_of("subsription_port") {
         let port: u16 = port.parse().expect("can't parse subsription_port");
-        args.subsription_port = SocketAddr::from(([127, 0, 0, 1], port));
+        args.subscription_port = SocketAddr::from(([127, 0, 0, 1], port));
+    } else {
+        args.subscription_port = args.rpc_addr.port().checked_add(1);
     }
     args
 }

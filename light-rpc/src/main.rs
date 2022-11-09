@@ -467,7 +467,7 @@ pub fn main() {
         json_rpc_url,
         websocket_url,
         rpc_addr,
-        subsription_port,
+        subscription_port: subsription_port,
         ..
     } = &cli_config;
 
