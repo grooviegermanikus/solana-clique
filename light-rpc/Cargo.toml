@@ -7,7 +7,6 @@ edition = "2021"
 solana-client={path = "../client"}
 solana-sdk={path = "../sdk"}
 tokio = { version = "1.14.1", features = ["full"]}
-rayon = "1.5"
 futures = "0.3.25"
 jsonrpc-core = "18.0.0"
 jsonrpc-core-client = { version = "18.0.0" }
@@ -63,10 +62,6 @@ tokio-util = { version = "0.6", features = ["codec", "compat"] }
 [dev-dependencies]
 csv = "1.1.6"
 serde = { version = "1", features = ["derive"]}
-
-[[bench]]
-name="metrics"
-harness=false
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]

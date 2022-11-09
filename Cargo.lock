@@ -2528,6 +2528,7 @@ dependencies = [
  "crossbeam-channel",
  "csv",
  "dashmap 4.0.2",
+ "futures 0.3.25",
  "itertools",
  "jsonrpc-core",
  "jsonrpc-core-client",
@@ -2574,6 +2575,20 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-util 0.6.9",
+]
+
+[[package]]
+name = "light-rpc-bench"
+version = "0.1.0"
+dependencies = [
+ "csv",
+ "futures 0.3.25",
+ "light-rpc",
+ "rayon",
+ "serde",
+ "solana-client",
+ "solana-sdk 1.15.0",
+ "tokio",
 ]
 
 [[package]]

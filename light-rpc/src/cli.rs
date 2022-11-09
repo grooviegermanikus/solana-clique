@@ -102,7 +102,8 @@ pub fn extract_args(matches: &ArgMatches) -> Config {
         let port: u16 = port.parse().expect("can't parse subsription_port");
         args.subscription_port = SocketAddr::from(([127, 0, 0, 1], port));
     } else {
-        args.subscription_port = args.rpc_addr.port().checked_add(1);
+        let port = args.rpc_addr.port().saturating_add(1);
+        args.subscription_port =SocketAddr::from(([127, 0, 0, 1], port));
     }
     args
 }
