@@ -1,69 +1,70 @@
-use bincode::de;
 use lite_rpc::Lite;
-use rayon::ThreadBuilder;
-use solana_client::{rpc_client, thin_client::ThinClient, tpu_client::TpuClientConfig};
-use solana_pubsub_client::pubsub_client::{
-    BlockSubscription, PubsubBlockClientSubscription, PubsubClient,
+use solana_client::{
+    pubsub_client::{BlockSubscription, PubsubClientError},
+    tpu_client::TpuClientConfig,
 };
-use solana_sdk::client::AsyncClient;
+use solana_pubsub_client::pubsub_client::{PubsubBlockClientSubscription, PubsubClient};
 use std::thread::{Builder, JoinHandle};
 
 use {
-    bincode::{config::Options, serialize},
-    crossbeam_channel::{Receiver, Sender},
-    jsonrpc_core::{
-        futures::future, types::error, BoxFuture, Error, MetaIoHandler, Metadata, Result,
-    },
+    bincode::config::Options,
+    crossbeam_channel::Receiver,
+    jsonrpc_core::{Error, MetaIoHandler, Metadata, Result},
     jsonrpc_derive::rpc,
-    jsonrpc_http_server::{
-        hyper, AccessControlAllowOrigin, CloseHandle, DomainsValidation, RequestMiddleware,
-        RequestMiddlewareAction, ServerBuilder,
-    },
-    serde::{Deserialize, Serialize},
-    solana_client::{rpc_client::RpcClient, rpc_config::RpcBlockConfig, tpu_client::TpuClient},
+    jsonrpc_http_server::{hyper, AccessControlAllowOrigin, DomainsValidation, ServerBuilder},
+    solana_client::{rpc_client::RpcClient, tpu_client::TpuClient},
     solana_perf::packet::PACKET_DATA_SIZE,
     solana_rpc_client_api::{
         config::*,
-        custom_error::RpcCustomError,
-        filter::RpcFilterType,
         response::{Response as RpcResponse, *},
     },
     solana_sdk::{
-        clock::{Slot, UnixTimestamp, MAX_RECENT_BLOCKHASHES},
         commitment_config::{CommitmentConfig, CommitmentLevel},
-        exit::Exit,
-        fee_calculator::FeeCalculator,
-        hash::Hash,
-        message::SanitizedMessage,
-        pubkey::{Pubkey, PUBKEY_BYTES},
         signature::Signature,
         transaction::VersionedTransaction,
     },
-    solana_streamer::socket::SocketAddrSpace,
     solana_tpu_client::connection_cache::ConnectionCache,
-    solana_transaction_status::{
-        BlockEncodingOptions, ConfirmedBlock, ConfirmedTransactionStatusWithSignature,
-        ConfirmedTransactionWithStatusMeta, EncodedConfirmedTransactionWithStatusMeta, Reward,
-        RewardType, TransactionBinaryEncoding, TransactionConfirmationStatus, TransactionStatus,
-        UiConfirmedBlock, UiTransactionEncoding,
-    },
+    solana_transaction_status::{TransactionBinaryEncoding, UiTransactionEncoding},
     std::{
         any::type_name,
-        cmp::{max, min},
-        collections::{HashMap, HashSet},
-        convert::TryFrom,
+        collections::HashMap,
         net::SocketAddr,
-        str::FromStr,
         sync::{
-            atomic::{AtomicBool, AtomicU64, Ordering},
-            Arc, Mutex, RwLock,
+            atomic::{AtomicU64, Ordering},
+            Arc, RwLock,
         },
-        time::Duration,
     },
 };
 
 use solana_perf::thread::renice_this_thread;
 mod cli;
+
+pub struct BlockInformation {
+    pub block_hash: RwLock<String>,
+    pub block_height: AtomicU64,
+    pub slot: AtomicU64,
+    pub confirmation_level: CommitmentLevel,
+}
+
+impl BlockInformation {
+    pub fn new(rpc_client: Arc<RpcClient>, commitment: CommitmentLevel) -> Self {
+
+        let slot = rpc_client
+            .get_slot_with_commitment(CommitmentConfig {
+                commitment: commitment,
+            })
+            .unwrap();
+
+        let (blockhash, blockheight) = rpc_client.get_latest_blockhash_with_commitment(CommitmentConfig { commitment }).unwrap();
+
+        BlockInformation{
+            block_hash: RwLock::new(blockhash.to_string()),
+            block_height: AtomicU64::new(blockheight),
+            slot: AtomicU64::new(slot),
+            confirmation_level : commitment,
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct LightRpcRequestProcessor {
@@ -72,11 +73,10 @@ pub struct LightRpcRequestProcessor {
     pub last_valid_block_height: u64,
     pub ws_url: String,
     connection_cache: Arc<ConnectionCache>,
-    pub current_slot: u64,
     pub signature_status: Arc<RwLock<HashMap<String, Option<CommitmentLevel>>>>,
     pub subscribed_clients: Arc<Vec<PubsubBlockClientSubscription>>,
-    pub confirmation_slot: Arc<AtomicU64>,
-    pub finalized_slot: Arc<AtomicU64>,
+    pub finalized_block_info: Arc<BlockInformation>,
+    pub confirmed_block_info: Arc<BlockInformation>,
     joinables: Arc<Vec<JoinHandle<()>>>,
 }
 
@@ -98,11 +98,44 @@ impl LightRpcRequestProcessor {
             .unwrap(),
         );
 
-        let current_slot = rpc_client.get_slot().unwrap();
-
-        println!("ws connection to {}", websocket_url);
         // subscribe for confirmed_blocks
-        let (mut client_confirmed, receiver_confirmed) = PubsubClient::block_subscribe(
+        let (client_confirmed, receiver_confirmed) =
+            Self::subscribe_block(websocket_url, CommitmentLevel::Confirmed).unwrap();
+
+        // subscribe for finalized blocks
+        let (client_finalized, receiver_finalized) =
+            Self::subscribe_block(websocket_url, CommitmentLevel::Finalized).unwrap();
+
+        let signature_status = Arc::new(RwLock::new(HashMap::new()));
+
+        let blockinfo_confirmed = Arc::new(BlockInformation::new(rpc_client.clone(), CommitmentLevel::Confirmed));
+        let blockinfo_finalized = Arc::new(BlockInformation::new(rpc_client.clone(), CommitmentLevel::Confirmed));
+
+        // create threads to listen for finalized and confrimed blocks
+        let joinables = vec![
+            Self::build_thread_to_process_blocks(receiver_confirmed, &signature_status, CommitmentLevel::Confirmed, &blockinfo_confirmed),
+            Self::build_thread_to_process_blocks(receiver_finalized, &signature_status, CommitmentLevel::Finalized, &blockinfo_finalized),
+         ];
+
+        LightRpcRequestProcessor {
+            rpc_client,
+            tpu_client,
+            last_valid_block_height: 0,
+            ws_url: websocket_url.clone(),
+            signature_status,
+            connection_cache: connection_cache,
+            subscribed_clients: Arc::new(vec![client_confirmed, client_finalized]),
+            joinables: Arc::new(joinables),
+            confirmed_block_info: blockinfo_confirmed,
+            finalized_block_info: blockinfo_finalized, 
+        }
+    }
+
+    fn subscribe_block(
+        websocket_url: &String,
+        commitment: CommitmentLevel,
+    ) -> std::result::Result<BlockSubscription, PubsubClientError> {
+        PubsubClient::block_subscribe(
             websocket_url.as_str(),
             RpcBlockSubscribeFilter::All,
             Some(RpcBlockSubscribeConfig {
@@ -117,129 +150,70 @@ impl LightRpcRequestProcessor {
                 max_supported_transaction_version: None,
             }),
         )
-        .unwrap();
+    }
 
-        // subscribe for finalized blocks
-        let (mut client_finalized, receiver_finalized) = PubsubClient::block_subscribe(
-            websocket_url.as_str(),
-            RpcBlockSubscribeFilter::All,
-            Some(RpcBlockSubscribeConfig {
-                commitment: Some(CommitmentConfig {
-                    commitment: CommitmentLevel::Finalized,
-                }),
-                encoding: None,
-                transaction_details: Some(
-                    solana_transaction_status::TransactionDetails::Signatures,
-                ),
-                show_rewards: None,
-                max_supported_transaction_version: None,
-            }),
-        )
-        .unwrap();
+    fn build_thread_to_process_blocks(reciever: Receiver<RpcResponse<RpcBlockUpdate>>,
+        signature_status: &Arc<RwLock<HashMap<String, Option<CommitmentLevel>>>>,
+        commitment : CommitmentLevel, 
+        block_information : &Arc<BlockInformation>) -> JoinHandle<()>{
 
-        let mut joinables = Vec::new();
-        let signature_status = Arc::new(RwLock::new(HashMap::new()));
-
-        let confirmation_slot = rpc_client
-            .get_slot_with_commitment(CommitmentConfig {
-                commitment: CommitmentLevel::Confirmed,
+        let signature_status = signature_status.clone();
+        let block_information = block_information.clone();
+        Builder::new()
+            .name("thread working on confirmation block".to_string())
+            .spawn(move || {
+                Self::process_block(
+                    reciever,
+                    signature_status,
+                    commitment,
+                    block_information,
+                );
             })
-            .unwrap();
-        let finalized_slot = rpc_client
-            .get_slot_with_commitment(CommitmentConfig {
-                commitment: CommitmentLevel::Finalized,
-            })
-            .unwrap();
-
-        let confirmation_slot = Arc::new(AtomicU64::new(confirmation_slot));
-        let finalized_slot = Arc::new(AtomicU64::new(finalized_slot));
-
-        // start thread which will listen to confirmed blocks
-        {
-            let signature_status = signature_status.clone();
-            let confirmation_slot = confirmation_slot.clone();
-            let finalized_slot = finalized_slot.clone();
-            let join_handle = Builder::new()
-                .name("thread working on confirmation block".to_string())
-                .spawn(move || {
-                    Self::process_block(
-                        receiver_confirmed,
-                        signature_status,
-                        CommitmentLevel::Confirmed,
-                        confirmation_slot,
-                    );
-                })
-                .unwrap();
-            joinables.push(join_handle);
-        }
-        // start thread which will listen to finalized blocks
-        {
-            let signature_status = signature_status.clone();
-            let confirmation_slot = confirmation_slot.clone();
-            let finalized_slot = finalized_slot.clone();
-            let join_handle = Builder::new()
-                .name("thread working on finalized block".to_string())
-                .spawn(move || {
-                    Self::process_block(
-                        receiver_finalized,
-                        signature_status,
-                        CommitmentLevel::Finalized,
-                        finalized_slot,
-                    );
-                })
-                .unwrap();
-            joinables.push(join_handle);
-        }
-
-        LightRpcRequestProcessor {
-            rpc_client,
-            tpu_client,
-            last_valid_block_height: 0,
-            ws_url: websocket_url.clone(),
-            current_slot,
-            signature_status,
-            connection_cache: connection_cache,
-            subscribed_clients: Arc::new(vec![client_confirmed, client_finalized]),
-            joinables: Arc::new(joinables),
-            confirmation_slot: confirmation_slot,
-            finalized_slot: finalized_slot,
-        }
+            .unwrap()
     }
 
     fn process_block(
         reciever: Receiver<RpcResponse<RpcBlockUpdate>>,
         signature_status: Arc<RwLock<HashMap<String, Option<CommitmentLevel>>>>,
         commitment: CommitmentLevel,
-        updated_slot: Arc<AtomicU64>,
+        block_information: Arc<BlockInformation>,
     ) {
         println!("processing blocks for {}", commitment.to_string());
-        let mut last_update_slot: u64 = 0;
         loop {
             let block_data = reciever.recv();
 
             match block_data {
                 Ok(data) => {
-                    let blockUpdate = data.value;
-                    last_update_slot = blockUpdate.slot;
-                    updated_slot.swap(last_update_slot, Ordering::Relaxed);
-                    if let Some(block) = blockUpdate.block {
+                    let block_update = &data.value;
+                    block_information.slot.store(block_update.slot, Ordering::Relaxed);
+                    
+                    if let Some(block) = &block_update.block {
+
+                        block_information.block_height.store(block.block_height.unwrap(), Ordering::Relaxed);
+                        // context to update blockhash
+                        {
+                            let mut lock = block_information.block_hash.write().unwrap();
+                            *lock = block.blockhash.clone();
+                        }
                         if let Some(signatures) = &block.signatures {
                             let mut lock = signature_status.write().unwrap();
                             for signature in signatures {
                                 if lock.contains_key(signature) {
-                                    println!("found signature {} for commitment {}", signature, commitment);
+                                    println!(
+                                        "found signature {} for commitment {}",
+                                        signature, commitment
+                                    );
                                     lock.insert(signature.clone(), Some(commitment));
                                 }
                             }
                         } else {
                             println!(
                                 "Cannot get signatures at slot {} block hash {}",
-                                last_update_slot,
-                                block.blockhash,
+                                block_update.slot, block.blockhash,
                             );
                         }
                     } else {
-                        println!("Cannot get a block at slot {}", last_update_slot);
+                        println!("Cannot get a block at slot {}", block_update.slot);
                     }
                 }
                 Err(e) => {
@@ -247,15 +221,17 @@ impl LightRpcRequestProcessor {
                 }
             }
         }
-        println!("stopped processing blocks for {}", commitment.to_string());
     }
-
 }
 
 impl Metadata for LightRpcRequestProcessor {}
 
 pub mod lite_rpc {
-    use {super::*, solana_sdk::message::VersionedMessage};
+    use std::str::FromStr;
+
+    use solana_sdk::fee_calculator::FeeCalculator;
+
+    use super::*;
     #[rpc]
     pub trait Lite {
         type Metadata;
@@ -325,17 +301,29 @@ pub mod lite_rpc {
             meta: Self::Metadata,
             commitment: Option<CommitmentConfig>,
         ) -> Result<RpcResponse<RpcBlockhashFeeCalculator>> {
-            let recent_block_hash = meta.rpc_client.get_latest_blockhash().unwrap();
-            let lamport_per_signature = meta
-                .rpc_client
-                .get_fee_calculator_for_blockhash(&recent_block_hash)
-                .unwrap();
-            let slot = meta.rpc_client.get_slot().unwrap();
+            let commitment = match commitment {
+                Some(x) => x.commitment,
+                None => CommitmentLevel::Confirmed,
+            };
+            let (block_hash, slot) = match commitment {
+                CommitmentLevel::Finalized => { 
+                    let slot = meta.finalized_block_info.slot.load(Ordering::Relaxed);
+                    let lock = meta.finalized_block_info.block_hash.read().unwrap();
+                    (lock.clone(), slot)
+                },
+                _ => {
+
+                    let slot = meta.confirmed_block_info.slot.load(Ordering::Relaxed);
+                    let lock = meta.confirmed_block_info.block_hash.read().unwrap();
+                    (lock.clone(), slot)
+                }
+            };
+
             Ok(RpcResponse {
                 context: RpcResponseContext::new(slot),
                 value: RpcBlockhashFeeCalculator {
-                    blockhash: recent_block_hash.to_string(),
-                    fee_calculator: lamport_per_signature.unwrap(),
+                    blockhash: block_hash,
+                    fee_calculator: FeeCalculator::default(),
                 },
             })
         }
@@ -352,31 +340,32 @@ pub mod lite_rpc {
                 Some(x) => x.commitment,
                 None => CommitmentLevel::Confirmed,
             };
-            let confirmed_slot = meta.confirmation_slot.load(Ordering::Relaxed);
-            let finalized_slot = meta.finalized_slot.load(Ordering::Relaxed);
+            let confirmed_slot = meta.confirmed_block_info.slot.load(Ordering::Relaxed);
+            let finalized_slot = meta.finalized_block_info.slot.load(Ordering::Relaxed);
+
+            let slot = if commitment == CommitmentLevel::Finalized {
+                finalized_slot
+            } else {
+                confirmed_slot
+            };
 
             match k_value {
                 Some(value) => match value.1 {
-                    Some(commitmentForSignature) => {
-                        let slot = if commitment == CommitmentLevel::Finalized {
-                            finalized_slot
-                        } else {
-                            confirmed_slot
-                        };
+                    Some(commitment_for_signature) => {
                         println!("found in cache");
                         return Ok(RpcResponse {
                             context: RpcResponseContext::new(slot),
                             value: if commitment.eq(&CommitmentLevel::Finalized) {
-                                commitmentForSignature.eq(&CommitmentLevel::Finalized)
+                                commitment_for_signature.eq(&CommitmentLevel::Finalized)
                             } else {
-                                commitmentForSignature.eq(&CommitmentLevel::Finalized)
-                                    || commitmentForSignature.eq(&CommitmentLevel::Confirmed)
+                                commitment_for_signature.eq(&CommitmentLevel::Finalized)
+                                    || commitment_for_signature.eq(&CommitmentLevel::Confirmed)
                             },
                         });
                     }
                     None => {
                         return Ok(RpcResponse {
-                            context: RpcResponseContext::new(confirmed_slot),
+                            context: RpcResponseContext::new(slot),
                             value: false,
                         })
                     }
@@ -385,15 +374,19 @@ pub mod lite_rpc {
                     let signature = Signature::from_str(signature_str.as_str()).unwrap();
                     let ans = match commitment_cfg {
                         None => meta.rpc_client.confirm_transaction(&signature).unwrap(),
-                        Some(cfg) => meta.rpc_client.confirm_transaction_with_commitment(&signature, cfg).unwrap().value
+                        Some(cfg) => {
+                            meta.rpc_client
+                                .confirm_transaction_with_commitment(&signature, cfg)
+                                .unwrap()
+                                .value
+                        }
                     };
-                    return Ok(RpcResponse{
-                        context: RpcResponseContext::new(confirmed_slot),
-                        value : ans
-                    })
-                },
+                    return Ok(RpcResponse {
+                        context: RpcResponseContext::new(slot),
+                        value: ans,
+                    });
+                }
             };
-            
         }
     }
 }
@@ -467,7 +460,7 @@ pub fn main() {
         json_rpc_url,
         websocket_url,
         rpc_addr,
-        subscription_port: subsription_port,
+        subscription_port,
         ..
     } = &cli_config;
 
@@ -476,7 +469,7 @@ pub fn main() {
     io.extend_with(lite_rpc.to_delegate());
 
     let request_processor =
-        LightRpcRequestProcessor::new(json_rpc_url, websocket_url, subsription_port.clone());
+        LightRpcRequestProcessor::new(json_rpc_url, websocket_url, subscription_port.clone());
 
     let runtime = Arc::new(
         tokio::runtime::Builder::new_multi_thread()
@@ -505,8 +498,6 @@ pub fn main() {
     println!("Starting Lite RPC node");
     server.unwrap().wait();
 }
-
-
 
 // #[cfg(test)]
 // mod tests {
@@ -570,7 +561,6 @@ pub fn main() {
 //     }
 //     #[test]
 //     fn test_forward_transaction_confirm_transaction() {
-        
 
 //         let alice = Keypair::new();
 //         let bob = Keypair::new();
