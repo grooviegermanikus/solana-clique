@@ -92,6 +92,13 @@ impl TpuClient {
         )
     }
 
+    pub fn try_send_wire_transaction_batch(&self, wire_transactions: Vec<Vec<u8>>) -> TransportResult<()> {
+        self.invoke(
+            self.tpu_client
+                .try_send_wire_transaction_batch(wire_transactions),
+        )
+    }
+
     /// Send a wire transaction to the current and upcoming leader TPUs according to fanout size
     /// Returns the last error if all sends fail
     pub fn try_send_wire_transaction(&self, wire_transaction: Vec<u8>) -> TransportResult<()> {
