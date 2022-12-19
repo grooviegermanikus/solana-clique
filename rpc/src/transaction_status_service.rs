@@ -387,6 +387,7 @@ pub(crate) mod tests {
             return_data: None,
             executed_units: 0,
             accounts_data_len_delta: 0,
+            application_fees: std::collections::HashMap::new(),
         });
 
         let balances = TransactionBalancesSet {
