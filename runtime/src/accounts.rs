@@ -29,6 +29,7 @@ use {
     solana_sdk::{
         account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
         account_utils::StateMut,
+        application_fees::{self, ApplicationFeeStructure},
         bpf_loader_upgradeable::{self, UpgradeableLoaderState},
         clock::{BankId, Slot, INITIAL_RENT_EPOCH},
         feature_set::{
@@ -120,6 +121,19 @@ pub struct Accounts {
     pub(crate) account_locks: Mutex<AccountLocks>,
 }
 
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ApplicationFees {
+    pub pda_to_fees_maps: HashMap<Pubkey, u64>,
+}
+
+impl ApplicationFees {
+    pub fn new_empty() -> Self {
+        ApplicationFees {
+            pda_to_fees_maps: HashMap::new(),
+        }
+    }
+}
+
 // for the load instructions
 pub type TransactionRent = u64;
 pub type TransactionProgramIndices = Vec<Vec<usize>>;
@@ -129,6 +143,7 @@ pub struct LoadedTransaction {
     pub program_indices: TransactionProgramIndices,
     pub rent: TransactionRent,
     pub rent_debits: RentDebits,
+    pub application_fees: ApplicationFees,
 }
 
 pub type TransactionLoadResult = (Result<LoadedTransaction>, Option<NonceFull>);
@@ -378,6 +393,38 @@ impl Accounts {
             // accounts.iter().take(message.account_keys.len())
             accounts.append(&mut account_deps);
 
+            // process application fees for writable accounts
+            let application_fees_pid: Pubkey = application_fees::id();
+            let application_fees: HashMap<Pubkey, u64> = account_keys
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| message.is_writable(*index))
+                .into_iter()
+                .map(|(_, key)| {
+                    let (writable_account_fees, _) =
+                        Pubkey::find_program_address(&[&key.to_bytes()], &application_fees_pid);
+                    let account = self.accounts_db.load_with_fixed_root(
+                        ancestors,
+                        &writable_account_fees,
+                        load_zero_lamports,
+                    );
+                    match account {
+                        Some(x) => {
+                            let fee_structure =
+                                bincode::deserialize::<ApplicationFeeStructure>(x.0.data());
+                            if let Ok(fee_structure) = fee_structure {
+                                Some((*key, fee_structure.fee_lamports))
+                            } else {
+                                None
+                            }
+                        }
+                        None => None,
+                    }
+                })
+                .filter(|x| x.is_some())
+                .map(|x| x.unwrap())
+                .collect();
+
             if validated_fee_payer {
                 let program_indices = message
                     .instructions()
@@ -398,6 +445,9 @@ impl Accounts {
                     program_indices,
                     rent: tx_rent,
                     rent_debits,
+                    application_fees: ApplicationFees {
+                        pda_to_fees_maps: application_fees,
+                    },
                 })
             } else {
                 error_counters.account_not_found += 1;
@@ -1248,7 +1298,7 @@ impl Accounts {
             let execution_status = match &execution_results[i] {
                 TransactionExecutionResult::Executed { details, .. } => &details.status,
                 // Don't store any accounts if tx wasn't executed
-                TransactionExecutionResult::NotExecuted(_) => continue,
+                TransactionExecutionResult::NotExecuted { .. } => continue,
             };
 
             let maybe_nonce = match (execution_status, &*nonce) {
@@ -1457,6 +1507,7 @@ mod tests {
                 durable_nonce_fee: nonce.map(DurableNonceFee::from),
                 executed_units: 0,
                 accounts_data_len_delta: 0,
+                application_fees: HashMap::new(),
             },
             executors: Rc::new(RefCell::new(Executors::default())),
         }
@@ -2983,6 +3034,7 @@ mod tests {
                 program_indices: vec![],
                 rent: 0,
                 rent_debits: RentDebits::default(),
+                application_fees: ApplicationFees::new_empty(),
             }),
             None,
         );
@@ -2993,6 +3045,7 @@ mod tests {
                 program_indices: vec![],
                 rent: 0,
                 rent_debits: RentDebits::default(),
+                application_fees: ApplicationFees::new_empty(),
             }),
             None,
         );
@@ -3492,6 +3545,7 @@ mod tests {
                 program_indices: vec![],
                 rent: 0,
                 rent_debits: RentDebits::default(),
+                application_fees: ApplicationFees::new_empty(),
             }),
             nonce.clone(),
         );
@@ -3621,6 +3675,7 @@ mod tests {
                 program_indices: vec![],
                 rent: 0,
                 rent_debits: RentDebits::default(),
+                application_fees: ApplicationFees::new_empty(),
             }),
             nonce.clone(),
         );

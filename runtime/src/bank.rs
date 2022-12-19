@@ -611,6 +611,7 @@ pub struct TransactionExecutionDetails {
     /// The change in accounts data len for this transaction.
     /// NOTE: This value is valid IFF `status` is `Ok`.
     pub accounts_data_len_delta: i64,
+    pub application_fees: HashMap<Pubkey, u64>,
 }
 
 /// Type safe representation of a transaction execution attempt which
@@ -629,7 +630,10 @@ pub enum TransactionExecutionResult {
         details: TransactionExecutionDetails,
         executors: Rc<RefCell<Executors>>,
     },
-    NotExecuted(TransactionError),
+    NotExecuted {
+        error: TransactionError,
+        application_fees: HashMap<Pubkey, u64>,
+    },
 }
 
 impl TransactionExecutionResult {
@@ -643,21 +647,30 @@ impl TransactionExecutionResult {
     pub fn was_executed(&self) -> bool {
         match self {
             Self::Executed { .. } => true,
-            Self::NotExecuted(_) => false,
+            Self::NotExecuted { .. } => false,
         }
     }
 
     pub fn details(&self) -> Option<&TransactionExecutionDetails> {
         match self {
             Self::Executed { details, .. } => Some(details),
-            Self::NotExecuted(_) => None,
+            Self::NotExecuted { .. } => None,
         }
     }
 
     pub fn flattened_result(&self) -> Result<()> {
         match self {
             Self::Executed { details, .. } => details.status.clone(),
-            Self::NotExecuted(err) => Err(err.clone()),
+            Self::NotExecuted { error, .. } => Err(error.clone()),
+        }
+    }
+
+    pub fn get_application_fees(&self) -> HashMap<Pubkey, u64> {
+        match self {
+            Self::Executed { details, .. } => details.application_fees.clone(),
+            Self::NotExecuted {
+                application_fees, ..
+            } => application_fees.clone(),
         }
     }
 }
@@ -957,6 +970,7 @@ pub(crate) struct BankFieldsToDeserialize {
     pub(crate) epoch_stakes: HashMap<Epoch, EpochStakes>,
     pub(crate) is_delta: bool,
     pub(crate) accounts_data_len: u64,
+    pub(crate) application_fees_collected: Vec<(Pubkey, u64)>,
 }
 
 // Bank's common fields shared by all supported snapshot versions for serialization.
@@ -996,6 +1010,7 @@ pub(crate) struct BankFieldsToSerialize<'a> {
     pub(crate) epoch_stakes: &'a HashMap<Epoch, EpochStakes>,
     pub(crate) is_delta: bool,
     pub(crate) accounts_data_len: u64,
+    pub(crate) application_fees_collected: Vec<(Pubkey, u64)>,
 }
 
 // Can't derive PartialEq because RwLock doesn't implement PartialEq
@@ -1025,6 +1040,13 @@ impl PartialEq for Bank {
             && self.block_height == other.block_height
             && self.collector_id == other.collector_id
             && self.collector_fees.load(Relaxed) == other.collector_fees.load(Relaxed)
+            && other.application_fees_collected.len() == self.application_fees_collected.len()
+            && other.application_fees_collected.iter().all(|iter| {
+                match self.application_fees_collected.get(iter.key()) {
+                    Some(x) => *x.value() == *iter.value(),
+                    None => false,
+                }
+            })
             && self.fee_calculator == other.fee_calculator
             && self.fee_rate_governor == other.fee_rate_governor
             && self.collected_rent.load(Relaxed) == other.collected_rent.load(Relaxed)
@@ -1164,6 +1186,9 @@ pub struct Bank {
 
     /// Fees that have been collected
     collector_fees: AtomicU64,
+
+    /// Fees by applications
+    application_fees_collected: dashmap::DashMap<Pubkey, u64>,
 
     /// Deprecated, do not use
     /// Latest transaction fees for transactions processed by this bank
@@ -1366,6 +1391,7 @@ impl Bank {
             block_height: u64::default(),
             collector_id: Pubkey::default(),
             collector_fees: AtomicU64::default(),
+            application_fees_collected: dashmap::DashMap::new(),
             fee_calculator: FeeCalculator::default(),
             fee_rate_governor: FeeRateGovernor::default(),
             collected_rent: AtomicU64::default(),
@@ -1694,6 +1720,7 @@ impl Bank {
             parent_slot: parent.slot(),
             collector_id: *collector_id,
             collector_fees: AtomicU64::new(0),
+            application_fees_collected: dashmap::DashMap::new(),
             ancestors: Ancestors::default(),
             hash: RwLock::new(Hash::default()),
             is_delta: AtomicBool::new(false),
@@ -1984,6 +2011,9 @@ impl Bank {
             T::default()
         }
         let feature_set = new();
+        let mut application_fees_collected = dashmap::DashMap::new();
+        application_fees_collected.extend(fields.application_fees_collected);
+
         let mut bank = Self {
             rc: bank_rc,
             src: new(),
@@ -2012,6 +2042,7 @@ impl Bank {
             block_height: fields.block_height,
             collector_id: fields.collector_id,
             collector_fees: AtomicU64::new(fields.collector_fees),
+            application_fees_collected,
             fee_calculator: fields.fee_calculator,
             fee_rate_governor: fields.fee_rate_governor,
             collected_rent: AtomicU64::new(fields.collected_rent),
@@ -2138,6 +2169,11 @@ impl Bank {
             epoch_stakes: &self.epoch_stakes,
             is_delta: self.is_delta.load(Relaxed),
             accounts_data_len: self.load_accounts_data_size(),
+            application_fees_collected: self
+                .application_fees_collected
+                .iter()
+                .map(|x| (*x.key(), *x.value()))
+                .collect_vec(),
         }
     }
 
@@ -3019,6 +3055,36 @@ impl Bank {
                     burn += deposit;
                 }
             }
+
+            // apply application fees
+            let application_fees_collected = &self.application_fees_collected;
+            if application_fees_collected.len() > 0 {
+                application_fees_collected.iter().for_each(|iter| {
+                    let k = iter.key();
+                    let v = *iter.value();
+                    if v > 0 {
+                        match self.deposit(k, v) {
+                            Ok(post_balance) => {
+                                self.rewards.write().unwrap().push((
+                                    *k,
+                                    RewardInfo {
+                                        reward_type: RewardType::ApplicationFee,
+                                        lamports: v as i64,
+                                        post_balance,
+                                        commission: None,
+                                    },
+                                ));
+                            }
+                            Err(_) => {
+                                error!("Burning {} fee instead of crediting {}", v, k);
+                                inc_new_counter_error!("bank-burned_fee_lamports", v as usize);
+                                burn += v;
+                            }
+                        }
+                    }
+                });
+            }
+
             self.capitalization.fetch_sub(burn, Relaxed);
         }
     }
@@ -3667,7 +3733,7 @@ impl Bank {
         let flattened_result = execution_result.flattened_result();
         let logs = match execution_result {
             TransactionExecutionResult::Executed { details, .. } => details.log_messages,
-            TransactionExecutionResult::NotExecuted(_) => None,
+            TransactionExecutionResult::NotExecuted { .. } => None,
         }
         .unwrap_or_default();
 
@@ -3997,6 +4063,7 @@ impl Bank {
             lamports_per_signature,
             self.load_accounts_data_size(),
             &mut executed_units,
+            loaded_transaction.application_fees.pda_to_fees_maps.clone(),
         );
         process_message_time.stop();
 
@@ -4012,6 +4079,11 @@ impl Bank {
             timings.execute_accessories.update_executors_us,
             store_missing_executors_time.as_us()
         );
+
+        let final_application_fees = match &process_result {
+            Ok(x) => x.application_fees.clone(),
+            Err(_) => loaded_transaction.application_fees.pda_to_fees_maps.clone(),
+        };
 
         let status = process_result
             .and_then(|info| {
@@ -4067,6 +4139,7 @@ impl Bank {
                 durable_nonce_fee,
                 executed_units,
                 accounts_data_len_delta,
+                application_fees: final_application_fees,
             },
             executors,
         }
@@ -4153,7 +4226,7 @@ impl Bank {
             .iter_mut()
             .zip(sanitized_txs.iter())
             .map(|(accs, tx)| match accs {
-                (Err(e), _nonce) => TransactionExecutionResult::NotExecuted(e.clone()),
+                (Err(e), _nonce) => TransactionExecutionResult::NotExecuted{ error : e.clone(), application_fees : HashMap::new() /* Ideally should lock accounts for which write lock was taken */},
                 (Ok(loaded_transaction), nonce) => {
                     let mut feature_set_clone_time = Measure::start("feature_set_clone");
                     let feature_set = self.feature_set.clone();
@@ -4190,7 +4263,10 @@ impl Bank {
                                 compute_budget_process_transaction_time.as_us()
                             );
                             if let Err(err) = process_transaction_result {
-                                return TransactionExecutionResult::NotExecuted(err);
+                                return TransactionExecutionResult::NotExecuted{
+                                    error: err,
+                                    application_fees : loaded_transaction.application_fees.pda_to_fees_maps.clone(),
+                                };
                             }
                         }
                         compute_budget
@@ -4490,6 +4566,23 @@ impl Bank {
         }
     }
 
+    fn merge_application_fees<'a, I>(result: &dashmap::DashMap<Pubkey, u64>, fees: I)
+    where
+        I: Iterator<Item = (&'a Pubkey, &'a u64)>,
+    {
+        for f in fees {
+            match result.entry(*f.0) {
+                dashmap::mapref::entry::Entry::Occupied(mut x) => {
+                    let v = x.get_mut();
+                    *v = *v + *f.1;
+                }
+                dashmap::mapref::entry::Entry::Vacant(x) => {
+                    x.insert(*f.1);
+                }
+            }
+        }
+    }
+
     fn filter_program_errors_and_collect_fee(
         &self,
         txs: &[SanitizedTransaction],
@@ -4497,6 +4590,7 @@ impl Bank {
     ) -> Vec<Result<()>> {
         let hash_queue = self.blockhash_queue.read().unwrap();
         let mut fees = 0;
+        let mut application_fees: HashMap<Pubkey, u64> = HashMap::new();
 
         let results = txs
             .iter()
@@ -4506,7 +4600,7 @@ impl Bank {
                     TransactionExecutionResult::Executed { details, .. } => {
                         Ok((&details.status, details.durable_nonce_fee.as_ref()))
                     }
-                    TransactionExecutionResult::NotExecuted(err) => Err(err.clone()),
+                    TransactionExecutionResult::NotExecuted { error, .. } => Err(error.clone()),
                 }?;
 
                 let (lamports_per_signature, is_nonce) = durable_nonce_fee
@@ -4542,11 +4636,29 @@ impl Bank {
                 }
 
                 fees += fee;
+                // treat application fees
+                let mut application_fee_sum: u64 = 0;
+                let application_fees_for_transaction = execution_result.get_application_fees();
+                for fee in application_fees_for_transaction.iter() {
+                    match application_fees.get_mut(fee.0) {
+                        Some(v) => *v = *v + *fee.1,
+                        None => {
+                            application_fees.insert(*fee.0, *fee.1);
+                        }
+                    }
+                    application_fee_sum += *fee.1;
+                }
+                // In similar way above we charge the application fee to the payer
+                if application_fee_sum > 0 {
+                    self.withdraw(tx.message().fee_payer(), application_fee_sum)?;
+                }
                 Ok(())
             })
             .collect();
 
         self.collector_fees.fetch_add(fees, Relaxed);
+        // treat application fees
+        Self::merge_application_fees(&self.application_fees_collected, application_fees.iter());
         results
     }
 
@@ -7066,6 +7178,7 @@ pub(crate) mod tests {
                 durable_nonce_fee: nonce.map(DurableNonceFee::from),
                 executed_units: 0,
                 accounts_data_len_delta: 0,
+                application_fees: HashMap::new(),
             },
             executors: Rc::new(RefCell::new(Executors::default())),
         }
@@ -10031,6 +10144,7 @@ pub(crate) mod tests {
                 None,
             ),
         ];
+
         let initial_balance = bank.get_balance(&leader);
 
         let results = bank.filter_program_errors_and_collect_fee(&[tx1, tx2], &results);
@@ -12845,7 +12959,10 @@ pub(crate) mod tests {
         // This is a TransactionError - not possible to charge fees
         assert!(matches!(
             transaction_results.execution_results[1],
-            TransactionExecutionResult::NotExecuted(TransactionError::AccountNotFound),
+            TransactionExecutionResult::NotExecuted {
+                error: TransactionError::AccountNotFound,
+                ..
+            },
         ));
         assert_eq!(transaction_balances_set.pre_balances[1], vec![0, 0, 1]);
         assert_eq!(transaction_balances_set.post_balances[1], vec![0, 0, 1]);

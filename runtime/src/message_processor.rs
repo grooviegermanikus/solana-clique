@@ -17,13 +17,14 @@ use {
         hash::Hash,
         message::SanitizedMessage,
         precompiles::is_precompile,
+        pubkey::Pubkey,
         rent::Rent,
         saturating_add_assign,
         sysvar::instructions,
         transaction::TransactionError,
         transaction_context::{InstructionAccount, TransactionContext},
     },
-    std::{borrow::Cow, cell::RefCell, rc::Rc, sync::Arc},
+    std::{borrow::Cow, cell::RefCell, collections::HashMap, rc::Rc, sync::Arc},
 };
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
@@ -39,10 +40,11 @@ impl ::solana_frozen_abi::abi_example::AbiExample for MessageProcessor {
 }
 
 /// Resultant information gathered from calling process_message()
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct ProcessedMessageInfo {
     /// The change in accounts data len
     pub accounts_data_len_delta: i64,
+    pub application_fees: HashMap<Pubkey, u64>,
 }
 
 impl MessageProcessor {
@@ -68,6 +70,7 @@ impl MessageProcessor {
         lamports_per_signature: u64,
         current_accounts_data_len: u64,
         accumulated_consumed_units: &mut u64,
+        application_fees: HashMap<Pubkey, u64>,
     ) -> Result<ProcessedMessageInfo, TransactionError> {
         let mut invoke_context = InvokeContext::new(
             transaction_context,
@@ -81,6 +84,7 @@ impl MessageProcessor {
             blockhash,
             lamports_per_signature,
             current_accounts_data_len,
+            application_fees,
         );
 
         debug_assert_eq!(program_indices.len(), message.instructions().len());
@@ -182,6 +186,7 @@ impl MessageProcessor {
         }
         Ok(ProcessedMessageInfo {
             accounts_data_len_delta: invoke_context.get_accounts_data_meter().delta(),
+            application_fees: invoke_context.application_fees,
         })
     }
 }
@@ -200,6 +205,7 @@ mod tests {
             secp256k1_instruction::new_secp256k1_instruction,
             secp256k1_program,
         },
+        std::collections::HashMap,
     };
 
     #[derive(Debug, Serialize, Deserialize)]
@@ -315,6 +321,7 @@ mod tests {
             0,
             0,
             &mut 0,
+            HashMap::new(),
         );
         assert!(result.is_ok());
         assert_eq!(
@@ -364,6 +371,7 @@ mod tests {
             0,
             0,
             &mut 0,
+            HashMap::new(),
         );
         assert_eq!(
             result,
@@ -403,6 +411,7 @@ mod tests {
             0,
             0,
             &mut 0,
+            HashMap::new(),
         );
         assert_eq!(
             result,
@@ -539,6 +548,7 @@ mod tests {
             0,
             0,
             &mut 0,
+            HashMap::new(),
         );
         assert_eq!(
             result,
@@ -573,6 +583,7 @@ mod tests {
             0,
             0,
             &mut 0,
+            HashMap::new(),
         );
         assert!(result.is_ok());
 
@@ -604,6 +615,7 @@ mod tests {
             0,
             0,
             &mut 0,
+            HashMap::new(),
         );
         assert!(result.is_ok());
         assert_eq!(
@@ -684,6 +696,7 @@ mod tests {
             0,
             0,
             &mut 0,
+            HashMap::new(),
         );
 
         assert_eq!(
