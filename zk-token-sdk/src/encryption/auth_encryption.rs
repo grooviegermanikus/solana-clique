@@ -4,8 +4,9 @@
 #[cfg(not(target_os = "solana"))]
 use {
     aes_gcm_siv::{
-        aead::{Aead, NewAead},
+        aead::{Aead},
         Aes128GcmSiv,
+        KeyInit,
     },
     rand::{rngs::OsRng, CryptoRng, Rng, RngCore},
 };
