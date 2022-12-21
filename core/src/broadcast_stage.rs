@@ -1,5 +1,9 @@
 //! A stage to broadcast data from a leader node to validators
 #![allow(clippy::rc_buffer)]
+
+use anoma_network::topic::Topic;
+
+use self::broadcast_hyparview_run::BroadcastHyparviewRun;
 use {
     self::{
         broadcast_duplicates_run::{BroadcastDuplicatesConfig, BroadcastDuplicatesRun},
@@ -47,6 +51,7 @@ use {
 
 pub mod broadcast_duplicates_run;
 mod broadcast_fake_shreds_run;
+mod broadcast_hyparview_run;
 pub mod broadcast_metrics;
 pub(crate) mod broadcast_utils;
 mod fail_entry_verification_broadcast_run;
@@ -72,6 +77,7 @@ pub enum BroadcastStageType {
     FailEntryVerification,
     BroadcastFakeShreds,
     BroadcastDuplicates(BroadcastDuplicatesConfig),
+    BroadcastHyparview,
 }
 
 impl BroadcastStageType {
@@ -85,6 +91,7 @@ impl BroadcastStageType {
         exit_sender: Arc<AtomicBool>,
         blockstore: Arc<Blockstore>,
         bank_forks: Arc<RwLock<BankForks>>,
+        hyparview_topic: Option<Arc<Topic>>,
         shred_version: u16,
     ) -> BroadcastStage {
         match self {
@@ -131,6 +138,18 @@ impl BroadcastStageType {
                 bank_forks,
                 BroadcastDuplicatesRun::new(shred_version, config.clone()),
             ),
+
+            BroadcastStageType::BroadcastHyparview => BroadcastStage::new(
+                sock,
+                cluster_info,
+                receiver,
+                retransmit_slots_receiver,
+                exit_sender,
+                blockstore,
+                bank_forks,
+                BroadcastHyparviewRun::new(shred_version, hyparview_topic.unwrap()),
+            ),
+
         }
     }
 }
@@ -434,6 +453,10 @@ pub fn broadcast_shreds(
 
 #[cfg(test)]
 pub mod test {
+    use std::thread::__FastLocalKeyInner;
+
+    use anoma_network::Network;
+
     use {
         super::*,
         crossbeam_channel::unbounded,

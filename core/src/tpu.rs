@@ -1,6 +1,8 @@
 //! The `tpu` module implements the Transaction Processing Unit, a
 //! multi-stage transaction processing pipeline in software.
 
+use std::collections::HashSet;
+
 use {
     crate::{
         banking_stage::BankingStage,
@@ -16,6 +18,7 @@ use {
         staked_nodes_updater_service::StakedNodesUpdaterService,
     },
     crossbeam_channel::{unbounded, Receiver},
+    multiaddr::{Protocol, Multiaddr},
     solana_client::connection_cache::ConnectionCache,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{blockstore::Blockstore, blockstore_processor::TransactionStatusSender},
@@ -235,6 +238,18 @@ impl Tpu {
             bank_forks.clone(),
         );
 
+        let hyparview_config = anoma_network::Config::default();
+        let mut hyparview_network = anoma_network::Network::new(hyparview_config, anoma_network::Keypair::generate_ed25519()).unwrap();
+        let hyparview_shreds_config = anoma_network::topic::Config {
+            name: "/solana/shreds".into(),
+            bootstrap: HashSet::from_iter(cluster_info.all_peers().iter().map(|(c, _)| {
+                let ip = c.tpu.ip();
+                let mut address: Multiaddr = ip.into();
+                address.push(Protocol::Tcp(10000));
+                return address;
+            })),
+        };
+        let hyparview_topic = Arc::new(hyparview_network.join(hyparview_shreds_config).unwrap());
         let broadcast_stage = broadcast_type.new_broadcast_stage(
             broadcast_sockets,
             cluster_info.clone(),
@@ -243,6 +258,7 @@ impl Tpu {
             exit.clone(),
             blockstore.clone(),
             bank_forks,
+            Some(hyparview_topic),
             shred_version,
         );
 
