@@ -14192,7 +14192,7 @@ pub(crate) mod tests {
             transaction_results.execution_results[1],
             TransactionExecutionResult::NotExecuted {
                 error: TransactionError::AccountNotFound,
-                application_fees: HashMap::new()
+                ..
             },
         ));
         assert_eq!(transaction_balances_set.pre_balances[1], vec![0, 0, 1]);

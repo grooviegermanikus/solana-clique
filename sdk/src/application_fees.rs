@@ -39,9 +39,9 @@ pub const APPLICATION_FEE_STRUCTURE_SIZE: usize = 8 + 4 + 8;
     Serialize,
 )]
 pub enum ApplicationFeesInstuctions {
-    // Add fee to a account
-    AddOrUpdateFee { fees: u64 },
-    RemoveFees,
+    // Add, Remove or change fees for a writable account
+    // Set fees=0 to remove the fees
+    Update { fees: u64 },
     // The write account owner i.e program usually can CPI this instruction to rebate the fees to good actors
     Rebate,
     // Rebase all fees beloning to the owner
@@ -49,7 +49,7 @@ pub enum ApplicationFeesInstuctions {
 }
 
 impl ApplicationFeesInstuctions {
-    pub fn add_or_update_fees(
+    pub fn update(
         fees: u64,
         writable_account: Pubkey,
         owner: Pubkey,
@@ -61,28 +61,12 @@ impl ApplicationFeesInstuctions {
         );
         Instruction::new_with_borsh(
             id(),
-            &Self::AddOrUpdateFee { fees: fees },
+            &Self::Update { fees: fees },
             vec![
-                AccountMeta::new(writable_account, false),
                 AccountMeta::new_readonly(owner, true),
+                AccountMeta::new(writable_account, false),
                 AccountMeta::new(pda, false),
                 AccountMeta::new(payer, true),
-            ],
-        )
-    }
-
-    pub fn remove_fees(writable_account: Pubkey, owner: Pubkey) -> Instruction {
-        let (pda, _bump) = Pubkey::find_program_address(
-            &[&writable_account.to_bytes()],
-            &crate::application_fees::id(),
-        );
-        Instruction::new_with_borsh(
-            id(),
-            &Self::RemoveFees,
-            vec![
-                AccountMeta::new(writable_account, false),
-                AccountMeta::new_readonly(owner, true),
-                AccountMeta::new(pda, false),
             ],
         )
     }
@@ -92,8 +76,8 @@ impl ApplicationFeesInstuctions {
             id(),
             &Self::Rebate,
             vec![
-                AccountMeta::new_readonly(writable_account, false),
                 AccountMeta::new_readonly(owner, true),
+                AccountMeta::new_readonly(writable_account, false),
             ],
         )
     }
