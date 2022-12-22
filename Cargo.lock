@@ -4731,7 +4731,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-application-fees"
+name = "solana-application-fees-program"
 version = "1.15.0"
 dependencies = [
  "bincode",

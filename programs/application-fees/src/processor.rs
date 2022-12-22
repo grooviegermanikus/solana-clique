@@ -160,9 +160,28 @@ impl Processor {
         let writable_account_key = *writable_account.get_key();
         drop(writable_account);
         drop(owner);
-        invoke_context
-            .application_fees
-            .remove(&writable_account_key);
+        // do rebate
+        let lamports_rebated = {
+            let lamports = invoke_context
+                .application_fees
+                .get_mut(&writable_account_key);
+            if let Some(lamports) = lamports {
+                let lamports_rebated = *lamports;
+                *lamports = 0;
+                lamports_rebated
+            } else {
+                0
+            }
+        };
+        // log message
+        if lamports_rebated > 0 {
+            ic_msg!(
+                invoke_context,
+                "application fees rebated for writable account {} lamports {}",
+                writable_account_key.to_string(),
+                lamports_rebated
+            );
+        }
         Ok(())
     }
 
@@ -183,8 +202,23 @@ impl Processor {
             let borrowed_account = account.borrow();
             let account_owner = borrowed_account.owner();
             if owner_key.eq(account_owner) {
-                if invoke_context.application_fees.contains_key(key) {
-                    invoke_context.application_fees.remove(key);
+                let lamports_rebated = {
+                    let lamports = invoke_context.application_fees.get_mut(key);
+                    if let Some(lamports) = lamports {
+                        let lamports_rebated = *lamports;
+                        *lamports = 0;
+                        lamports_rebated
+                    } else {
+                        0
+                    }
+                };
+                if lamports_rebated > 0 {
+                    ic_msg!(
+                        invoke_context,
+                        "application fees rebated for writable account {} lamports {}",
+                        key.to_string(),
+                        lamports_rebated,
+                    );
                 }
             }
         }

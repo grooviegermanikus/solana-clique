@@ -1,5 +1,5 @@
 [package]
-name = "solana-application-fees"
+name = "solana-application-fees-program"
 version = "1.15.0"
 description = "Solana Application Fee program"
 authors = ["Solana Maintainers <maintainers@solana.foundation>"]
@@ -23,7 +23,7 @@ rustc_version = "0.4"
 
 [lib]
 crate-type = ["lib"]
-name = "solana_application_fees"
+name = "solana_application_fees_program"
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
