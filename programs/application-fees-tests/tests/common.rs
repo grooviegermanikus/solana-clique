@@ -1,3 +1,6 @@
+use solana_program_test::BanksClientError;
+use solana_sdk::{instruction::InstructionError, transaction::TransactionError};
+
 use {
     assert_matches::assert_matches,
     solana_application_fees_program::{id, processor::process_instruction},
@@ -37,4 +40,14 @@ pub async fn create_owner_and_dummy_account(context: &mut ProgramTestContext) ->
     assert_matches!(client.process_transaction(tx).await, Ok(()));
 
     (owner, account.pubkey())
+}
+
+pub async fn assert_error(
+    res : Result<(), BanksClientError>,
+    expected_err: InstructionError,
+) {
+    assert_eq!(
+        res.unwrap_err().unwrap(),
+        TransactionError::InstructionError(0, expected_err),
+    );
 }
