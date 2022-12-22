@@ -12,6 +12,7 @@ use {
     solana_program::{
         instruction::{AccountMeta, Instruction},
         pubkey::Pubkey,
+        system_program,
     },
 };
 crate::declare_id!("App1icationFees1111111111111111111111111111");
@@ -59,7 +60,7 @@ impl ApplicationFeesInstuctions {
             &[&writable_account.to_bytes()],
             &crate::application_fees::id(),
         );
-        Instruction::new_with_borsh(
+        Instruction::new_with_bincode(
             id(),
             &Self::Update { fees: fees },
             vec![
@@ -67,12 +68,13 @@ impl ApplicationFeesInstuctions {
                 AccountMeta::new(writable_account, false),
                 AccountMeta::new(pda, false),
                 AccountMeta::new(payer, true),
+                AccountMeta::new_readonly(system_program::id(), false),
             ],
         )
     }
 
     pub fn rebate(writable_account: Pubkey, owner: Pubkey) -> Instruction {
-        Instruction::new_with_borsh(
+        Instruction::new_with_bincode(
             id(),
             &Self::Rebate,
             vec![
@@ -83,7 +85,7 @@ impl ApplicationFeesInstuctions {
     }
 
     pub fn rebate_all(owner: Pubkey) -> Instruction {
-        Instruction::new_with_borsh(
+        Instruction::new_with_bincode(
             id(),
             &Self::RebateAll,
             vec![AccountMeta::new_readonly(owner, true)],

@@ -50,13 +50,25 @@ impl Processor {
         }
 
         if !writable_account.get_owner().eq(owner.get_key()) {
-            ic_msg!(invoke_context, "Invalid account owner");
+            ic_msg!(
+                invoke_context,
+                "Invalid account owner {} instead of {}",
+                writable_account.get_owner().to_string(),
+                owner.get_key().to_string()
+            );
             return Err(InstructionError::IllegalOwner);
         }
+        let writable_account_key = *writable_account.get_key();
+        ic_msg!(
+            invoke_context,
+            "ApplicationFeesInstuctions::Update called for {} to change fees to {}",
+            writable_account_key.to_string(),
+            fees
+        );
         drop(owner);
 
         let (calculated_pda, _bump) =
-            Pubkey::find_program_address(&[&writable_account.get_key().to_bytes()], &crate::id());
+            Pubkey::find_program_address(&[&writable_account_key.to_bytes()], &crate::id());
         if !calculated_pda.eq(pda.get_key()) {
             ic_msg!(invoke_context, "Invalid pda to store fee info");
             return Err(InstructionError::InvalidArgument);
@@ -69,8 +81,18 @@ impl Processor {
         drop(pda);
         // allocate pda to store application fee strucutre
         if is_pda_empty {
+            if fees == 0 {
+                ic_msg!(invoke_context, "Removing fees which do not exist");
+                return Err(InstructionError::InvalidArgument);
+            }
+            ic_msg!(
+                invoke_context,
+                "Creating new application fees account for writable account {}",
+                writable_account_key.to_string()
+            );
             let payer =
                 instruction_context.try_borrow_instruction_account(transaction_context, 3)?;
+
             let payer_key = *payer.get_key();
             if !payer.is_signer() {
                 ic_msg!(invoke_context, "Payer account must be a signer");
@@ -106,6 +128,12 @@ impl Processor {
         if fees == 0 {
             let transaction_context = &invoke_context.transaction_context;
             let instruction_context = transaction_context.get_current_instruction_context()?;
+            ic_msg!(
+                invoke_context,
+                "Removing existing application fees account for writable account {}",
+                writable_account_key.to_string()
+            );
+
             // remove the fees associated with the writable account
             let mut payer =
                 instruction_context.try_borrow_instruction_account(transaction_context, 3)?;
