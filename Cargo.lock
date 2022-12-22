@@ -4743,6 +4743,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-application-fees-program-tests"
+version = "1.15.0"
+dependencies = [
+ "assert_matches",
+ "bincode",
+ "solana-application-fees-program",
+ "solana-program-test",
+ "solana-sdk 1.15.0",
+]
+
+[[package]]
 name = "solana-banking-bench"
 version = "1.15.0"
 dependencies = [

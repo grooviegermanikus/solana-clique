@@ -6231,7 +6231,7 @@ impl Bank {
         let txs = vec![tx.into()];
         let batch = match self.prepare_entry_batch(txs) {
             Ok(batch) => batch,
-            // TODO : Not sure about application fees here
+            // Normally we not able to prepare batch so no accounts were locked, so not application fees
             Err(err) => {
                 return TransactionExecutionResult::NotExecuted {
                     error: err,
