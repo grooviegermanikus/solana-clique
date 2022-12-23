@@ -12,7 +12,7 @@ use solana_sdk::{pubkey::Pubkey, application_fees::{self, ApplicationFeeStructur
 use crate::common::{create_owner_and_dummy_account, setup_test_context, assert_error};
 
 #[tokio::test]
-async fn test_adding_write_lock_fees() {
+async fn test_add_update_remove_write_lock_fees() {
     let mut context = setup_test_context().await;
 
     let (owner, writable_account) = create_owner_and_dummy_account(&mut context).await;
@@ -64,6 +64,7 @@ async fn test_adding_write_lock_fees() {
         let fees_data2 : ApplicationFeeStructure = bincode::deserialize::<ApplicationFeeStructure>(account2.data.as_slice()).unwrap();
         assert_eq!(fees_data2.fee_lamports, 10000);
 
+        // test remove
         let remove_ix = ApplicationFeesInstuctions::update(
             0,
             writable_account,
