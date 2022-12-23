@@ -20282,4 +20282,52 @@ pub(crate) mod tests {
             )),
         );
     }
+
+
+    pub fn create_owner_and_dummy_account(bank: Arc<Bank>, payer: &Keypair) -> (Keypair, Pubkey) {
+        let owner = Keypair::new();
+        let account = Keypair::new();
+        let recent_blockhash = bank.last_blockhash();
+        let length : usize = 1;
+        let required_lamports = bank.get_sysvar_cache_for_tests().get_rent()
+                .minimum_balance(length)
+                .max(1);
+
+        let ix = solana_sdk::instruction::create_account(
+            &payer.pubkey(),
+            &account.pubkey(),
+            required_lamports,
+            length,
+            &owner.pubkey(),
+        );
+        let tx = Transaction::new_signed_with_payer(
+            &[ix.clone()],
+            Some(&payer.pubkey()),
+            &[payer, &account],
+            recent_blockhash,
+        );
+        bank.process_transaction(&tx).unwrap();
+        (owner, account.pubkey())
+    }
+
+
+    #[test]
+    fn test_application_fees() {
+        let (mut genesis_config, mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL * 10);
+        genesis_config.rent.lamports_per_byte_year = 0;
+        genesis_cfg_fn(&mut genesis_config);
+        let mut bank = Bank::new_for_tests(&genesis_config);
+        bank.feature_set = Arc::new(feature_set);
+        let mut bank = Arc::new(bank);
+
+        // move ahead
+        for _ in 0..2 {
+            goto_end_of_slot(Arc::get_mut(&mut bank).unwrap());
+            bank = Arc::new(new_from_parent(&bank));
+        }
+        let (owner, account) = create_owner_and_dummy_account(bank, &mint_keypair);
+
+
+        let balance_before_transfer = bank.get_balance(&mint_keypair.pubkey());
+    }
 }
