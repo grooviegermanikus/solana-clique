@@ -17,27 +17,24 @@ pub async fn setup_test_context() -> ProgramTestContext {
 
 pub async fn create_owner_and_dummy_account(context: &mut ProgramTestContext) -> (Keypair, Pubkey) {
     let owner = Keypair::new();
+    let account = create_a_dummy_account(context, &owner.pubkey()).await;
+    (owner, account)
+}
+
+pub async fn create_a_dummy_account(context: &mut ProgramTestContext, owner: &Pubkey) -> Pubkey {
     let account = Keypair::new();
     let payer = &context.payer;
     let client = &mut context.banks_client;
     let recent_blockhash = context.last_blockhash;
-    let ix = create_account(
-        &payer.pubkey(),
-        &account.pubkey(),
-        100_000_000,
-        1,
-        &owner.pubkey(),
-    );
+    let ix = create_account(&payer.pubkey(), &account.pubkey(), 100_000_000, 1, owner);
     let tx = Transaction::new_signed_with_payer(
         &[ix.clone()],
         Some(&payer.pubkey()),
         &[payer, &account],
         recent_blockhash,
     );
-
     assert_matches!(client.process_transaction(tx).await, Ok(()));
-
-    (owner, account.pubkey())
+    account.pubkey()
 }
 
 pub async fn assert_error(res: Result<(), BanksClientError>, expected_err: InstructionError) {

@@ -227,26 +227,28 @@ impl Processor {
         for i in 0..number_of_accounts {
             let account = transaction_context.get_account_at_index(i)?;
             let key = transaction_context.get_key_of_account_at_index(i)?;
-            let borrowed_account = account.borrow();
-            let account_owner = borrowed_account.owner();
-            if owner_key.eq(account_owner) {
-                let lamports_rebated = {
-                    let lamports = invoke_context.application_fees.get_mut(key);
-                    if let Some(lamports) = lamports {
-                        let lamports_rebated = *lamports;
-                        *lamports = 0;
-                        lamports_rebated
-                    } else {
-                        0
+            let borrowed_account = account.try_borrow();
+            if let Ok(borrowed_account) = borrowed_account {
+                let account_owner = borrowed_account.owner();
+                if owner_key.eq(account_owner) {
+                    let lamports_rebated = {
+                        let lamports = invoke_context.application_fees.get_mut(key);
+                        if let Some(lamports) = lamports {
+                            let lamports_rebated = *lamports;
+                            *lamports = 0;
+                            lamports_rebated
+                        } else {
+                            0
+                        }
+                    };
+                    if lamports_rebated > 0 {
+                        ic_msg!(
+                            invoke_context,
+                            "application fees rebated for writable account {} lamports {}",
+                            key.to_string(),
+                            lamports_rebated,
+                        );
                     }
-                };
-                if lamports_rebated > 0 {
-                    ic_msg!(
-                        invoke_context,
-                        "application fees rebated for writable account {} lamports {}",
-                        key.to_string(),
-                        lamports_rebated,
-                    );
                 }
             }
         }
