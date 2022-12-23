@@ -21,7 +21,7 @@ pub fn process_instruction(
     let instruction_data = instruction_context.get_instruction_data();
 
     match limited_deserialize(instruction_data)? {
-        ApplicationFeesInstuctions::Update { fees } => {
+        ApplicationFeesInstuctions::UpdateFees { fees } => {
             Processor::add_or_update_fees(invoke_context, fees)
         }
         ApplicationFeesInstuctions::Rebate => Processor::rebate(invoke_context),

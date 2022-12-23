@@ -42,7 +42,7 @@ pub const APPLICATION_FEE_STRUCTURE_SIZE: usize = 8 + 4 + 8;
 pub enum ApplicationFeesInstuctions {
     // Add, Remove or change fees for a writable account
     // Set fees=0 to remove the fees
-    Update { fees: u64 },
+    UpdateFees { fees: u64 },
     // The write account owner i.e program usually can CPI this instruction to rebate the fees to good actors
     Rebate,
     // Rebase all fees beloning to the owner
@@ -50,7 +50,7 @@ pub enum ApplicationFeesInstuctions {
 }
 
 impl ApplicationFeesInstuctions {
-    pub fn update(
+    pub fn update_fees(
         fees: u64,
         writable_account: Pubkey,
         owner: Pubkey,
@@ -62,7 +62,7 @@ impl ApplicationFeesInstuctions {
         );
         Instruction::new_with_bincode(
             id(),
-            &Self::Update { fees: fees },
+            &Self::UpdateFees { fees: fees },
             vec![
                 AccountMeta::new_readonly(owner, true),
                 AccountMeta::new(writable_account, false),
