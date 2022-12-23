@@ -7,9 +7,14 @@ use {
 };
 
 mod common;
-use solana_sdk::{pubkey::Pubkey, application_fees::{self, ApplicationFeeStructure}, instruction::InstructionError};
-
-use crate::common::{create_owner_and_dummy_account, setup_test_context, assert_error};
+use {
+    crate::common::{assert_error, create_owner_and_dummy_account, setup_test_context},
+    solana_sdk::{
+        application_fees::{self, ApplicationFeeStructure},
+        instruction::InstructionError,
+        pubkey::Pubkey,
+    },
+};
 
 #[tokio::test]
 async fn test_adding_write_lock_fees() {
@@ -37,9 +42,11 @@ async fn test_adding_write_lock_fees() {
 
         assert_matches!(client.process_transaction(transaction).await, Ok(()));
 
-        let (pda, _bump) = Pubkey::find_program_address(&[&writable_account.to_bytes()], &application_fees::id());
+        let (pda, _bump) =
+            Pubkey::find_program_address(&[&writable_account.to_bytes()], &application_fees::id());
         let account = client.get_account(pda).await.unwrap().unwrap();
-        let fees_data : ApplicationFeeStructure = bincode::deserialize::<ApplicationFeeStructure>(account.data.as_slice()).unwrap();
+        let fees_data: ApplicationFeeStructure =
+            bincode::deserialize::<ApplicationFeeStructure>(account.data.as_slice()).unwrap();
         assert_eq!(fees_data.fee_lamports, 100);
 
         // test update
@@ -61,15 +68,12 @@ async fn test_adding_write_lock_fees() {
         assert_matches!(client.process_transaction(update_transaction).await, Ok(()));
 
         let account2 = client.get_account(pda).await.unwrap().unwrap();
-        let fees_data2 : ApplicationFeeStructure = bincode::deserialize::<ApplicationFeeStructure>(account2.data.as_slice()).unwrap();
+        let fees_data2: ApplicationFeeStructure =
+            bincode::deserialize::<ApplicationFeeStructure>(account2.data.as_slice()).unwrap();
         assert_eq!(fees_data2.fee_lamports, 10000);
 
-        let remove_ix = ApplicationFeesInstuctions::update(
-            0,
-            writable_account,
-            owner.pubkey(),
-            payer.pubkey(),
-        );
+        let remove_ix =
+            ApplicationFeesInstuctions::update(0, writable_account, owner.pubkey(), payer.pubkey());
 
         let remove_transaction = Transaction::new_signed_with_payer(
             &[remove_ix.clone()],
@@ -109,7 +113,11 @@ async fn test_adding_write_lock_fees_with_wrong_owner() {
             recent_blockhash,
         );
 
-        assert_error(client.process_transaction(transaction).await, InstructionError::IllegalOwner).await;
+        assert_error(
+            client.process_transaction(transaction).await,
+            InstructionError::IllegalOwner,
+        )
+        .await;
     }
 }
 
@@ -138,7 +146,11 @@ async fn test_adding_write_lock_fees_without_signature_owner() {
             recent_blockhash,
         );
 
-        assert_error(client.process_transaction(transaction).await, InstructionError::MissingRequiredSignature).await;
+        assert_error(
+            client.process_transaction(transaction).await,
+            InstructionError::MissingRequiredSignature,
+        )
+        .await;
     }
 }
 
@@ -167,6 +179,10 @@ async fn test_adding_write_lock_fees_without_signature_payer() {
             recent_blockhash,
         );
 
-        assert_error(client.process_transaction(transaction).await, InstructionError::MissingRequiredSignature).await;
+        assert_error(
+            client.process_transaction(transaction).await,
+            InstructionError::MissingRequiredSignature,
+        )
+        .await;
     }
 }

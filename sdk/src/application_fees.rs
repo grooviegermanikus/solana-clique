@@ -40,6 +40,8 @@ pub const APPLICATION_FEE_STRUCTURE_SIZE: usize = 8 + 4 + 8;
     Serialize,
 )]
 pub enum ApplicationFeesInstuctions {
+    // Create a application fees account
+    Create,
     // Add, Remove or change fees for a writable account
     // Set fees=0 to remove the fees
     Update { fees: u64 },
@@ -50,6 +52,25 @@ pub enum ApplicationFeesInstuctions {
 }
 
 impl ApplicationFeesInstuctions {
+
+    pub fn create(writable_account: Pubkey, owner: Pubkey, payer: Pubkey) -> Instruction{
+        let (pda, _bump) = Pubkey::find_program_address(
+            &[&writable_account.to_bytes()],
+            &crate::application_fees::id(),
+        );
+        Instruction::new_with_bincode(
+            id(),
+            &Self::Create,
+            vec![
+                AccountMeta::new_readonly(owner, true),
+                AccountMeta::new(writable_account, false),
+                AccountMeta::new(pda, false),
+                AccountMeta::new(payer, true),
+                AccountMeta::new_readonly(system_program::id(), false),
+            ],
+        )
+    }
+
     pub fn update(
         fees: u64,
         writable_account: Pubkey,

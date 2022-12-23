@@ -8083,6 +8083,7 @@ pub mod test_utils {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use solana_sdk::application_fees::ApplicationFeesInstuctions;
     #[allow(deprecated)]
     use solana_sdk::sysvar::fees::Fees;
     use {
@@ -20289,15 +20290,15 @@ pub(crate) mod tests {
         let account = Keypair::new();
         let recent_blockhash = bank.last_blockhash();
         let length : usize = 1;
-        let required_lamports = bank.get_sysvar_cache_for_tests().get_rent()
+        let required_lamports = bank.get_sysvar_cache_for_tests().get_rent().unwrap()
                 .minimum_balance(length)
                 .max(1);
-
-        let ix = solana_sdk::instruction::create_account(
+        
+        let ix = solana_sdk::system_instruction::create_account(
             &payer.pubkey(),
             &account.pubkey(),
             required_lamports,
-            length,
+            length as u64,
             &owner.pubkey(),
         );
         let tx = Transaction::new_signed_with_payer(
@@ -20307,17 +20308,42 @@ pub(crate) mod tests {
             recent_blockhash,
         );
         bank.process_transaction(&tx).unwrap();
+
+        let (pda, _bump) = Pubkey::find_program_address(
+            &[&account.pubkey().to_bytes()],
+            &solana_sdk::application_fees::id(),
+        );
+
+        let ix = solana_sdk::application_fees::ApplicationFeesInstuctions::create(
+            account.pubkey(), 
+            owner.pubkey(), 
+            payer.pubkey(), 
+        );
+        let tx = Transaction::new_signed_with_payer(
+            &[ix.clone()],
+            Some(&payer.pubkey()),
+            &[payer, &owner],
+            recent_blockhash,
+        );
+        bank.process_transaction(&tx).unwrap();
+
+        let account_data = bank.get_account(&account.pubkey()).unwrap();
+        assert_eq!(*account_data.owner(),  owner.pubkey());
+        assert_eq!(account_data.data().len(), length);
+
+        let account_data = bank.get_account(&pda).unwrap();
+        assert_eq!(*account_data.owner(),  solana_sdk::application_fees::id());
+        assert_eq!(account_data.data().len(), solana_sdk::application_fees::APPLICATION_FEE_STRUCTURE_SIZE);
         (owner, account.pubkey())
     }
 
 
     #[test]
     fn test_application_fees() {
-        let (mut genesis_config, mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL * 10);
+        let (mut genesis_config, payer_keypair) = create_genesis_config(LAMPORTS_PER_SOL * 10);
         genesis_config.rent.lamports_per_byte_year = 0;
-        genesis_cfg_fn(&mut genesis_config);
         let mut bank = Bank::new_for_tests(&genesis_config);
-        bank.feature_set = Arc::new(feature_set);
+        bank.feature_set = Arc::new(FeatureSet::all_enabled());
         let mut bank = Arc::new(bank);
 
         // move ahead
@@ -20325,9 +20351,47 @@ pub(crate) mod tests {
             goto_end_of_slot(Arc::get_mut(&mut bank).unwrap());
             bank = Arc::new(new_from_parent(&bank));
         }
-        let (owner, account) = create_owner_and_dummy_account(bank, &mint_keypair);
+        let (owner, account) = create_owner_and_dummy_account(bank.clone(), &payer_keypair);
+        let payer = payer_keypair.pubkey();
 
+        // set application fees for the account to 1 SOL
+        {
+            let add_ix = ApplicationFeesInstuctions::update(
+                LAMPORTS_PER_SOL,
+                account,
+                owner.pubkey(),
+                payer,
+            );
+            let recent_blockhash = bank.last_blockhash();
 
-        let balance_before_transfer = bank.get_balance(&mint_keypair.pubkey());
+            let transaction = Transaction::new_signed_with_payer(
+                &[add_ix.clone()],
+                Some(&payer),
+                &[&payer_keypair, &owner],
+                recent_blockhash,
+            );
+
+            bank.process_transaction(&transaction).unwrap();
+        }
+
+        let balance_before_transfer = bank.get_balance(&payer);
+        // do instruction where account is writable 
+        {
+            let transfer_one_lamport = solana_sdk::system_instruction::transfer(&payer, &account, 1);
+            let recent_blockhash = bank.last_blockhash();
+            let transaction = Transaction::new_signed_with_payer(
+                &[transfer_one_lamport.clone()],
+                Some(&payer),
+                &[&payer_keypair, &owner],
+                recent_blockhash,
+            );
+
+            bank.process_transaction(&transaction).unwrap();
+        }
+        let balance_after_transfer = bank.get_balance(&payer);
+        // diff in balance before and after is more than a SOL i.e application fee is charged
+        assert!(balance_before_transfer - balance_after_transfer > LAMPORTS_PER_SOL);
+        assert!(false);
+
     }
 }

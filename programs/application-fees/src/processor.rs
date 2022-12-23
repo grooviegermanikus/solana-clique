@@ -21,6 +21,7 @@ pub fn process_instruction(
     let instruction_data = instruction_context.get_instruction_data();
 
     match limited_deserialize(instruction_data)? {
+        ApplicationFeesInstuctions::Create => Processor::create(invoke_context),
         ApplicationFeesInstuctions::Update { fees } => {
             Processor::add_or_update_fees(invoke_context, fees)
         }
@@ -32,6 +33,96 @@ pub fn process_instruction(
 pub struct Processor;
 
 impl Processor {
+    fn create(invoke_context: &mut InvokeContext,) -> Result<(), InstructionError>  {
+        let transaction_context = &invoke_context.transaction_context;
+        let instruction_context = transaction_context.get_current_instruction_context()?;
+
+        let owner = instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
+        let writable_account =
+            instruction_context.try_borrow_instruction_account(transaction_context, 1)?;
+        let pda = instruction_context.try_borrow_instruction_account(transaction_context, 2)?;
+
+        if !owner.is_signer() {
+            ic_msg!(invoke_context, "Authority account must be a signer");
+            return Err(InstructionError::MissingRequiredSignature);
+        }
+
+        if !writable_account.get_owner().eq(owner.get_key()) {
+            ic_msg!(
+                invoke_context,
+                "Invalid account owner {} instead of {}",
+                writable_account.get_owner().to_string(),
+                owner.get_key().to_string()
+            );
+            return Err(InstructionError::IllegalOwner);
+        }
+        let writable_account_key = *writable_account.get_key();
+
+        ic_msg!(
+            invoke_context,
+            "ApplicationFeesInstuctions::Create called for {}",
+            writable_account_key.to_string()
+        );
+
+        let (calculated_pda, _bump) =
+            Pubkey::find_program_address(&[&writable_account_key.to_bytes()], &crate::id());
+        if !calculated_pda.eq(pda.get_key()) {
+            ic_msg!(invoke_context, "Invalid pda to store fee info");
+            return Err(InstructionError::InvalidArgument);
+        }
+        drop(writable_account);
+
+        let pda_key = *pda.get_key();
+        let is_pda_empty = pda.get_data().is_empty();
+        let pda_lamports = pda.get_lamports();
+        drop(pda);
+        if !is_pda_empty {
+            ic_msg!(
+                invoke_context,
+                "Application fees already initialized for {}",
+                writable_account_key.to_string(),
+            );
+            return Err(InstructionError::AccountAlreadyInitialized);
+        }
+
+        let payer =
+                instruction_context.try_borrow_instruction_account(transaction_context, 3)?;
+
+        let payer_key = *payer.get_key();
+        if !payer.is_signer() {
+            ic_msg!(invoke_context, "Payer account must be a signer");
+            return Err(InstructionError::MissingRequiredSignature);
+        }
+        drop(payer);
+
+        let account_data_len = APPLICATION_FEE_STRUCTURE_SIZE;
+        let rent = invoke_context.get_sysvar_cache().get_rent()?;
+        let required_lamports = rent
+            .minimum_balance(account_data_len)
+            .max(1)
+            .saturating_sub(pda_lamports);
+        drop(owner);
+
+        if required_lamports > 0 {
+            invoke_context.native_invoke(
+                system_instruction::transfer(&payer_key, &pda_key, required_lamports),
+                &[payer_key],
+            )?;
+        }
+
+        invoke_context.native_invoke(
+            system_instruction::allocate(&pda_key, account_data_len as u64),
+            &[pda_key],
+        )?;
+
+        invoke_context.native_invoke(
+            system_instruction::assign(&pda_key, &crate::id()),
+            &[pda_key],
+        )?;
+
+        Ok(())
+    }
+
     fn add_or_update_fees(
         invoke_context: &mut InvokeContext,
         fees: u64,
