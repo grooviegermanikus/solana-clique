@@ -4735,8 +4735,14 @@ name = "solana-application-fees-program"
 version = "1.15.0"
 dependencies = [
  "bincode",
+ "bytemuck",
  "log",
+ "num-derive",
+ "num-traits",
  "rustc_version 0.4.0",
+ "serde",
+ "solana-frozen-abi 1.15.0",
+ "solana-frozen-abi-macro 1.15.0",
  "solana-program 1.15.0",
  "solana-program-runtime",
  "solana-sdk 1.15.0",

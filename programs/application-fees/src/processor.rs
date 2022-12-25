@@ -1,5 +1,4 @@
 use {
-    solana_program::{pubkey::Pubkey, system_instruction},
     solana_program_runtime::{ic_msg, invoke_context::InvokeContext},
     solana_sdk::{
         account::ReadableAccount,
@@ -9,6 +8,8 @@ use {
         instruction::InstructionError,
         program_utils::limited_deserialize,
         transaction_context::IndexOfAccount,
+        pubkey::Pubkey,
+        system_instruction,
     },
 };
 
