@@ -1,15 +1,15 @@
+use crate::instruction::ApplicationFeesInstuctions;
+
 use {
     solana_program_runtime::{ic_msg, invoke_context::InvokeContext},
     solana_sdk::{
         account::ReadableAccount,
-        application_fees::{
-            ApplicationFeeStructure, ApplicationFeesInstuctions, APPLICATION_FEE_STRUCTURE_SIZE,
-        },
+        application_fees::{ApplicationFeeStructure, APPLICATION_FEE_STRUCTURE_SIZE},
         instruction::InstructionError,
         program_utils::limited_deserialize,
-        transaction_context::IndexOfAccount,
         pubkey::Pubkey,
         system_instruction,
+        transaction_context::IndexOfAccount,
     },
 };
 

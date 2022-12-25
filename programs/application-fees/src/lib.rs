@@ -7,4 +7,6 @@ use solana_program::declare_id;
 #[cfg(not(target_os = "solana"))]
 pub mod processor;
 
+pub mod instruction;
+
 declare_id!("App1icationFees1111111111111111111111111111");

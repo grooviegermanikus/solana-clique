@@ -1,9 +1,9 @@
+use solana_application_fees_program::instruction::{rebate, update_fees};
+
 use {
     assert_matches::assert_matches,
     solana_program_test::tokio,
-    solana_sdk::{
-        application_fees::ApplicationFeesInstuctions, signature::Signer, transaction::Transaction,
-    },
+    solana_sdk::{signature::Signer, transaction::Transaction},
 };
 
 mod common;
@@ -29,7 +29,7 @@ async fn test_application_fees_are_applied_without_rebate() {
         let client = &mut context.banks_client;
         let payer = &context.payer;
         let recent_blockhash = context.last_blockhash;
-        let add_ix = ApplicationFeesInstuctions::update_fees(
+        let add_ix = update_fees(
             LAMPORTS_PER_SOL,
             writable_account,
             owner.pubkey(),
@@ -97,7 +97,7 @@ async fn test_application_fees_are_applied_on_multiple_accounts() {
         let client = &mut context.banks_client;
         let payer = &context.payer;
         let recent_blockhash = context.last_blockhash;
-        let add_ix = ApplicationFeesInstuctions::update_fees(
+        let add_ix = update_fees(
             LAMPORTS_PER_SOL,
             writable_account,
             owner.pubkey(),
@@ -120,7 +120,7 @@ async fn test_application_fees_are_applied_on_multiple_accounts() {
             bincode::deserialize::<ApplicationFeeStructure>(account.data.as_slice()).unwrap();
         assert_eq!(fees_data.fee_lamports, LAMPORTS_PER_SOL);
 
-        let add_ix = ApplicationFeesInstuctions::update_fees(
+        let add_ix = update_fees(
             LAMPORTS_PER_SOL * 2,
             writable_account2,
             owner2.pubkey(),
@@ -208,7 +208,7 @@ async fn test_application_fees_are_applied_without_rebate_for_failed_transaction
         let client = &mut context.banks_client;
         let payer = &context.payer;
         let recent_blockhash = context.last_blockhash;
-        let add_ix = ApplicationFeesInstuctions::update_fees(
+        let add_ix = update_fees(
             LAMPORTS_PER_SOL,
             writable_account,
             owner.pubkey(),
@@ -294,7 +294,7 @@ async fn test_application_fees_are_not_applied_if_rebated() {
         let client = &mut context.banks_client;
         let payer = &context.payer;
         let recent_blockhash = context.last_blockhash;
-        let add_ix = ApplicationFeesInstuctions::update_fees(
+        let add_ix = update_fees(
             LAMPORTS_PER_SOL,
             writable_account,
             owner.pubkey(),
@@ -326,10 +326,7 @@ async fn test_application_fees_are_not_applied_if_rebated() {
 
         let blockhash = client.get_latest_blockhash().await.unwrap();
         let transfer_ix = system_instruction::transfer(&payer.pubkey(), &writable_account, 1);
-        let rebate_ix = solana_sdk::application_fees::ApplicationFeesInstuctions::rebate(
-            writable_account,
-            owner.pubkey(),
-        );
+        let rebate_ix = rebate(writable_account, owner.pubkey());
         let transaction = Transaction::new_signed_with_payer(
             &[transfer_ix.clone(), rebate_ix.clone()],
             Some(&payer.pubkey()),
@@ -372,7 +369,7 @@ async fn test_application_fees_are_not_applied_on_single_rebated_account() {
         let client = &mut context.banks_client;
         let payer = &context.payer;
         let recent_blockhash = context.last_blockhash;
-        let add_ix = ApplicationFeesInstuctions::update_fees(
+        let add_ix = update_fees(
             LAMPORTS_PER_SOL,
             writable_account,
             owner.pubkey(),
@@ -395,7 +392,7 @@ async fn test_application_fees_are_not_applied_on_single_rebated_account() {
             bincode::deserialize::<ApplicationFeeStructure>(account.data.as_slice()).unwrap();
         assert_eq!(fees_data.fee_lamports, LAMPORTS_PER_SOL);
 
-        let add_ix = ApplicationFeesInstuctions::update_fees(
+        let add_ix = update_fees(
             LAMPORTS_PER_SOL * 2,
             writable_account2,
             owner2.pubkey(),
@@ -428,10 +425,7 @@ async fn test_application_fees_are_not_applied_on_single_rebated_account() {
         let blockhash = client.get_latest_blockhash().await.unwrap();
         let transfer_ix1 = system_instruction::transfer(&payer.pubkey(), &writable_account, 1);
         let transfer_ix2 = system_instruction::transfer(&payer.pubkey(), &writable_account2, 1);
-        let rebate_ix = solana_sdk::application_fees::ApplicationFeesInstuctions::rebate(
-            writable_account,
-            owner.pubkey(),
-        );
+        let rebate_ix = rebate(writable_account, owner.pubkey());
         let transaction = Transaction::new_signed_with_payer(
             &[
                 transfer_ix1.clone(),

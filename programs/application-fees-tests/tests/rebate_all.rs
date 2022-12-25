@@ -1,9 +1,9 @@
+use solana_application_fees_program::instruction::{rebate_all, update_fees};
+
 use {
     assert_matches::assert_matches,
     solana_program_test::tokio,
-    solana_sdk::{
-        application_fees::ApplicationFeesInstuctions, signature::Signer, transaction::Transaction,
-    },
+    solana_sdk::{signature::Signer, transaction::Transaction},
 };
 
 mod common;
@@ -30,7 +30,7 @@ async fn test_application_fees_are_not_applied_on_rebate_all() {
         let client = &mut context.banks_client;
         let payer = &context.payer;
         let recent_blockhash = context.last_blockhash;
-        let add_ix = ApplicationFeesInstuctions::update_fees(
+        let add_ix = update_fees(
             LAMPORTS_PER_SOL,
             writable_account,
             owner.pubkey(),
@@ -54,7 +54,7 @@ async fn test_application_fees_are_not_applied_on_rebate_all() {
         assert_eq!(fees_data.fee_lamports, LAMPORTS_PER_SOL);
 
         // update fees for account 2
-        let add_ix = ApplicationFeesInstuctions::update_fees(
+        let add_ix = update_fees(
             LAMPORTS_PER_SOL * 2,
             writable_account2,
             owner2.pubkey(),
@@ -78,7 +78,7 @@ async fn test_application_fees_are_not_applied_on_rebate_all() {
         assert_eq!(fees_data.fee_lamports, 2 * LAMPORTS_PER_SOL);
 
         // update fees for account 3
-        let add_ix = ApplicationFeesInstuctions::update_fees(
+        let add_ix = update_fees(
             LAMPORTS_PER_SOL * 3,
             writable_account3,
             owner.pubkey(),
@@ -112,8 +112,7 @@ async fn test_application_fees_are_not_applied_on_rebate_all() {
         let transfer_ix1 = system_instruction::transfer(&payer.pubkey(), &writable_account, 1);
         let transfer_ix2 = system_instruction::transfer(&payer.pubkey(), &writable_account2, 1);
         let transfer_ix3 = system_instruction::transfer(&payer.pubkey(), &writable_account3, 1);
-        let rebate_all =
-            solana_sdk::application_fees::ApplicationFeesInstuctions::rebate_all(owner.pubkey());
+        let rebate_all = rebate_all(owner.pubkey());
         let transaction = Transaction::new_signed_with_payer(
             &[
                 transfer_ix1.clone(),

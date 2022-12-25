@@ -1,9 +1,9 @@
+use solana_application_fees_program::instruction::update_fees;
+
 use {
     assert_matches::assert_matches,
     solana_program_test::tokio,
-    solana_sdk::{
-        application_fees::ApplicationFeesInstuctions, signature::Signer, transaction::Transaction,
-    },
+    solana_sdk::{signature::Signer, transaction::Transaction},
 };
 
 mod common;
@@ -26,12 +26,7 @@ async fn test_add_update_remove_write_lock_fees() {
         let client = &mut context.banks_client;
         let payer = &context.payer;
         let recent_blockhash = context.last_blockhash;
-        let add_ix = ApplicationFeesInstuctions::update_fees(
-            100,
-            writable_account,
-            owner.pubkey(),
-            payer.pubkey(),
-        );
+        let add_ix = update_fees(100, writable_account, owner.pubkey(), payer.pubkey());
 
         let transaction = Transaction::new_signed_with_payer(
             &[add_ix.clone()],
@@ -51,12 +46,7 @@ async fn test_add_update_remove_write_lock_fees() {
 
         // test update
 
-        let update_ix = ApplicationFeesInstuctions::update_fees(
-            10000,
-            writable_account,
-            owner.pubkey(),
-            payer.pubkey(),
-        );
+        let update_ix = update_fees(10000, writable_account, owner.pubkey(), payer.pubkey());
 
         let update_transaction = Transaction::new_signed_with_payer(
             &[update_ix.clone()],
@@ -73,12 +63,7 @@ async fn test_add_update_remove_write_lock_fees() {
         assert_eq!(fees_data2.fee_lamports, 10000);
 
         // test remove
-        let remove_ix = ApplicationFeesInstuctions::update_fees(
-            0,
-            writable_account,
-            owner.pubkey(),
-            payer.pubkey(),
-        );
+        let remove_ix = update_fees(0, writable_account, owner.pubkey(), payer.pubkey());
 
         let remove_transaction = Transaction::new_signed_with_payer(
             &[remove_ix.clone()],
@@ -104,12 +89,7 @@ async fn test_adding_write_lock_fees_with_wrong_owner() {
         let client = &mut context.banks_client;
         let payer = &context.payer;
         let recent_blockhash = context.last_blockhash;
-        let add_ix = ApplicationFeesInstuctions::update_fees(
-            100,
-            writable_account,
-            owner2.pubkey(),
-            payer.pubkey(),
-        );
+        let add_ix = update_fees(100, writable_account, owner2.pubkey(), payer.pubkey());
 
         let transaction = Transaction::new_signed_with_payer(
             &[add_ix.clone()],
@@ -137,12 +117,7 @@ async fn test_adding_write_lock_fees_without_signature_owner() {
         let client = &mut context.banks_client;
         let payer = &context.payer;
         let recent_blockhash = context.last_blockhash;
-        let add_ix = ApplicationFeesInstuctions::update_fees(
-            100,
-            writable_account,
-            owner.pubkey(),
-            payer.pubkey(),
-        );
+        let add_ix = update_fees(100, writable_account, owner.pubkey(), payer.pubkey());
 
         let transaction = Transaction::new_signed_with_payer(
             &[add_ix.clone()],
@@ -170,12 +145,7 @@ async fn test_adding_write_lock_fees_without_signature_payer() {
         let client = &mut context.banks_client;
         let payer = &context.payer;
         let recent_blockhash = context.last_blockhash;
-        let add_ix = ApplicationFeesInstuctions::update_fees(
-            100,
-            writable_account,
-            owner.pubkey(),
-            payer.pubkey(),
-        );
+        let add_ix = update_fees(100, writable_account, owner.pubkey(), payer.pubkey());
 
         let transaction = Transaction::new_signed_with_payer(
             &[add_ix.clone()],
