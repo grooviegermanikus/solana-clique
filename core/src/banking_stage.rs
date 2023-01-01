@@ -2410,6 +2410,7 @@ mod tests {
                 durable_nonce_fee: None,
                 executed_units: 0,
                 accounts_data_len_delta: 0,
+                application_fees: HashMap::new(),
             },
             executors: Rc::new(RefCell::new(Executors::default())),
         }
@@ -2838,7 +2839,10 @@ mod tests {
             assert_eq!(entry.transactions.len(), txs.len());
 
             // Other TransactionErrors should not be recorded
-            results[0] = TransactionExecutionResult::NotExecuted(TransactionError::AccountNotFound);
+            results[0] = TransactionExecutionResult::NotExecuted {
+                error: TransactionError::AccountNotFound,
+                application_fees: HashMap::new(),
+            };
             let RecordTransactionsSummary {
                 result,
                 retryable_indexes,
