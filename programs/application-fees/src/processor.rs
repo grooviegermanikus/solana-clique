@@ -8,17 +8,15 @@ use {
         program_utils::limited_deserialize,
         pubkey::Pubkey,
         system_instruction,
-        transaction_context::IndexOfAccount,
     },
 };
 
 pub fn process_instruction(
-    _first_instruction_account: IndexOfAccount,
+    _first_instruction_account: usize,
+    instruction_data: &[u8],
     invoke_context: &mut InvokeContext,
 ) -> Result<(), InstructionError> {
     let transaction_context = &invoke_context.transaction_context;
-    let instruction_context = transaction_context.get_current_instruction_context()?;
-    let instruction_data = instruction_context.get_instruction_data();
 
     match limited_deserialize(instruction_data)? {
         ApplicationFeesInstuctions::UpdateFees { fees } => {
@@ -149,8 +147,8 @@ impl Processor {
             payer.checked_add_lamports(withdrawn_lamports)?;
             drop(payer);
             // delete pda account
-            pda.set_data_length(0)?;
-            pda.set_lamports(0)?;
+            pda.set_data_length(0);
+            pda.set_lamports(0);
         } else {
             let transaction_context = &invoke_context.transaction_context;
             let instruction_context = transaction_context.get_current_instruction_context()?;
@@ -163,7 +161,7 @@ impl Processor {
                 _padding: [0; 8],
             };
             let seralized = bincode::serialize(&application_fee_structure).unwrap();
-            pda_account.set_data(seralized)?;
+            pda_account.set_data(seralized.as_slice());
         }
 
         Ok(())
