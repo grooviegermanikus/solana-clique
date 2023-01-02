@@ -427,6 +427,10 @@ pub mod check_syscall_outputs_do_not_overlap {
     solana_sdk::declare_id!("3uRVPBpyEJRo1emLCrq38eLRFGcu6uKSpUXqGvU8T7SZ");
 }
 
+pub mod add_application_fees_program {
+    solana_sdk::declare_id!("7hwmoguW2KEXkznQEsGfqGA9XTpGvScVae5MroWX5A9o");
+}
+
 lazy_static! {
     /// Map of feature identifiers to user-visible description
     pub static ref FEATURE_NAMES: HashMap<Pubkey, &'static str> = [
@@ -528,6 +532,7 @@ lazy_static! {
         (return_none_for_zero_lamport_accounts::id(), "return none for zero lamport accounts #27800"),
         (increase_tx_account_lock_limit::id(), "increase tx account lock limit to 128 #27241"),
         (check_syscall_outputs_do_not_overlap::id(), "check syscall outputs do_not overlap #28600"),
+        (add_application_fees_program::id(), "Add application fees program"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
