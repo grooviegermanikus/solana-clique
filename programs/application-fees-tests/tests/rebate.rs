@@ -475,3 +475,80 @@ async fn test_application_fees_are_not_applied_on_single_rebated_account() {
         2 * LAMPORTS_PER_SOL
     );
 }
+
+#[tokio::test]
+async fn test_application_fees_are_not_applied_if_rebated_owner_same_as_writable_account() {
+    let mut context = setup_test_context().await;
+
+    let owner = Keypair::new();
+    let writable_account = owner.pubkey();
+
+    {
+        let client = &mut context.banks_client;
+        let payer = &context.payer;
+        let recent_blockhash = context.last_blockhash;
+        let transfer_ix =
+            system_instruction::transfer(&payer.pubkey(), &writable_account, LAMPORTS_PER_SOL);
+        let add_ix = update_fees(
+            LAMPORTS_PER_SOL,
+            writable_account,
+            owner.pubkey(),
+            payer.pubkey(),
+        );
+
+        let transaction = Transaction::new_signed_with_payer(
+            &[transfer_ix.clone(), add_ix.clone()],
+            Some(&payer.pubkey()),
+            &[payer, &owner],
+            recent_blockhash,
+        );
+
+        assert_matches!(client.process_transaction(transaction).await, Ok(()));
+
+        let (pda, _bump) =
+            Pubkey::find_program_address(&[&writable_account.to_bytes()], &application_fees::id());
+        let account = client.get_account(pda).await.unwrap().unwrap();
+        let fees_data: ApplicationFeeStructure =
+            bincode::deserialize::<ApplicationFeeStructure>(account.data.as_slice()).unwrap();
+        assert_eq!(fees_data.fee_lamports, LAMPORTS_PER_SOL);
+    }
+
+    // transfer 1 lamport to the writable account / but payer has to pay 1SOL as application fee
+    {
+        let client = &mut context.banks_client;
+        let payer = &context.payer;
+        let balance_before_transaction = client.get_balance(payer.pubkey()).await.unwrap();
+
+        let blockhash = client.get_latest_blockhash().await.unwrap();
+        let transfer_ix = system_instruction::transfer(&payer.pubkey(), &writable_account, 1);
+        let rebate_ix = rebate(writable_account, owner.pubkey());
+        let transaction = Transaction::new_signed_with_payer(
+            &[transfer_ix.clone(), rebate_ix.clone()],
+            Some(&payer.pubkey()),
+            &[payer, &owner],
+            blockhash,
+        );
+        assert_matches!(client.process_transaction(transaction).await, Ok(()));
+
+        let balance_after_transaction = client.get_balance(payer.pubkey()).await.unwrap();
+        assert!(balance_before_transaction - balance_after_transaction < LAMPORTS_PER_SOL);
+    }
+
+    // check if the application fees are correcly dispatched to the correct account
+    let balance_writable_account_before = context
+        .banks_client
+        .get_balance(writable_account)
+        .await
+        .unwrap();
+    let slot = context.banks_client.get_root_slot().await.unwrap();
+    context.warp_to_slot(slot + 2).unwrap();
+    let balance_writable_account_after = context
+        .banks_client
+        .get_balance(writable_account)
+        .await
+        .unwrap();
+    assert_eq!(
+        balance_writable_account_after - balance_writable_account_before,
+        0
+    );
+}

@@ -41,24 +41,39 @@ impl Processor {
         let instruction_context = transaction_context.get_current_instruction_context()?;
 
         let owner = instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
-        let writable_account =
-            instruction_context.try_borrow_instruction_account(transaction_context, 1)?;
-        let pda = instruction_context.try_borrow_instruction_account(transaction_context, 2)?;
 
         if !owner.is_signer() {
             ic_msg!(invoke_context, "Authority account must be a signer");
             return Err(InstructionError::MissingRequiredSignature);
         }
 
-        if !writable_account.get_owner().eq(owner.get_key()) {
-            ic_msg!(
-                invoke_context,
-                "Invalid account owner {} instead of {}",
-                writable_account.get_owner().to_string(),
-                owner.get_key().to_string()
-            );
-            return Err(InstructionError::IllegalOwner);
-        }
+        let writable_account = {
+            let index_in_transaction =
+                instruction_context.get_index_of_instruction_account_in_transaction(1)?;
+            let writable_account_key =
+                transaction_context.get_key_of_account_at_index(index_in_transaction)?;
+            if writable_account_key.eq(owner.get_key()) {
+                owner
+            } else {
+                let writable_account =
+                    instruction_context.try_borrow_instruction_account(transaction_context, 1)?;
+
+                if !writable_account.get_owner().eq(owner.get_key()) {
+                    ic_msg!(
+                        invoke_context,
+                        "Invalid account owner {} instead of {}",
+                        writable_account.get_owner().to_string(),
+                        owner.get_key().to_string()
+                    );
+                    return Err(InstructionError::IllegalOwner);
+                }
+
+                drop(owner);
+                writable_account
+            }
+        };
+        let pda = instruction_context.try_borrow_instruction_account(transaction_context, 2)?;
+
         let writable_account_key = *writable_account.get_key();
         ic_msg!(
             invoke_context,
@@ -66,7 +81,6 @@ impl Processor {
             writable_account_key.to_string(),
             fees
         );
-        drop(owner);
 
         let (calculated_pda, _bump) =
             Pubkey::find_program_address(&[&writable_account_key.to_bytes()], &crate::id());
@@ -175,20 +189,37 @@ impl Processor {
         let instruction_context = transaction_context.get_current_instruction_context()?;
 
         let owner = instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
-        let writable_account =
-            instruction_context.try_borrow_instruction_account(transaction_context, 1)?;
         if !owner.is_signer() {
             ic_msg!(invoke_context, "Authority account must be a signer");
             return Err(InstructionError::MissingRequiredSignature);
         }
 
-        if !writable_account.get_owner().eq(owner.get_key()) {
-            ic_msg!(invoke_context, "Invalid account owner");
-            return Err(InstructionError::IllegalOwner);
-        }
-        let writable_account_key = *writable_account.get_key();
+        let index_in_transaction =
+            instruction_context.get_index_of_instruction_account_in_transaction(1)?;
+        let writable_account_key =
+            transaction_context.get_key_of_account_at_index(index_in_transaction)?;
+        let writable_account = {
+            if writable_account_key.eq(owner.get_key()) {
+                owner
+            } else {
+                let writable_account =
+                    instruction_context.try_borrow_instruction_account(transaction_context, 1)?;
+
+                if !writable_account.get_owner().eq(owner.get_key()) {
+                    ic_msg!(
+                        invoke_context,
+                        "Invalid account owner {} instead of {}",
+                        writable_account.get_owner().to_string(),
+                        owner.get_key().to_string()
+                    );
+                    return Err(InstructionError::IllegalOwner);
+                }
+
+                drop(owner);
+                writable_account
+            }
+        };
         drop(writable_account);
-        drop(owner);
         // do rebate
         let lamports_rebated = {
             let lamports = invoke_context
@@ -218,11 +249,12 @@ impl Processor {
         let transaction_context = &invoke_context.transaction_context;
         let instruction_context = transaction_context.get_current_instruction_context()?;
         let owner = instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
-        let owner_key = owner.get_key();
+        let owner_key = *owner.get_key();
         if !owner.is_signer() {
             ic_msg!(invoke_context, "Authority account must be a signer");
             return Err(InstructionError::MissingRequiredSignature);
         }
+        drop(owner);
 
         let number_of_accounts = transaction_context.get_number_of_accounts();
         for i in 0..number_of_accounts {
