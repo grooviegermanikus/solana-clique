@@ -369,6 +369,21 @@ pub struct TransactionResults {
 }
 
 #[derive(Debug, Clone)]
+pub struct ApplicationFeesWithRebates {
+    pub application_fees: HashMap<Pubkey, u64>,
+    pub total_application_fees_rebated: u64,
+}
+
+impl ApplicationFeesWithRebates {
+    pub fn new() -> Self {
+        ApplicationFeesWithRebates {
+            application_fees: HashMap::new(),
+            total_application_fees_rebated: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct TransactionExecutionDetails {
     pub status: Result<()>,
     pub log_messages: Option<Vec<String>>,
@@ -379,7 +394,7 @@ pub struct TransactionExecutionDetails {
     /// The change in accounts data len for this transaction.
     /// NOTE: This value is valid IFF `status` is `Ok`.
     pub accounts_data_len_delta: i64,
-    pub application_fees: HashMap<Pubkey, u64>,
+    pub application_fees_with_rebates: ApplicationFeesWithRebates,
 }
 
 /// Type safe representation of a transaction execution attempt which
@@ -435,10 +450,24 @@ impl TransactionExecutionResult {
 
     pub fn get_application_fees(&self) -> HashMap<Pubkey, u64> {
         match self {
-            Self::Executed { details, .. } => details.application_fees.clone(),
+            Self::Executed { details, .. } => details
+                .application_fees_with_rebates
+                .application_fees
+                .clone(),
             Self::NotExecuted {
                 application_fees, ..
             } => application_fees.clone(),
+        }
+    }
+
+    pub fn get_application_fees_rebated(&self) -> u64 {
+        match self {
+            Self::Executed { details, .. } => {
+                details
+                    .application_fees_with_rebates
+                    .total_application_fees_rebated
+            }
+            Self::NotExecuted { .. } => 0,
         }
     }
 }
@@ -4339,6 +4368,11 @@ impl Bank {
             Err(_) => loaded_transaction.application_fees.pda_to_fees_maps.clone(),
         };
 
+        let total_application_fees_rebated = match &process_result {
+            Ok(info) => info.total_rebates_for_application_fees,
+            _ => 0,
+        };
+
         let status = process_result
             .and_then(|info| {
                 let post_account_state_info =
@@ -4425,7 +4459,10 @@ impl Bank {
                 return_data,
                 executed_units,
                 accounts_data_len_delta,
-                application_fees: final_application_fees,
+                application_fees_with_rebates: ApplicationFeesWithRebates {
+                    application_fees: final_application_fees,
+                    total_application_fees_rebated,
+                },
             },
             tx_executor_cache,
         }
@@ -4959,8 +4996,14 @@ impl Bank {
                     application_fee_sum += *fee.1;
                 }
                 // In similar way above we charge the application fee to the payer
-                if application_fee_sum > 0 {
+                if execution_status.is_err() && application_fee_sum > 0 {
                     self.withdraw(tx.message().fee_payer(), application_fee_sum)?;
+                } else {
+                    // check for rebates
+                    let rebates = execution_result.get_application_fees_rebated();
+                    if rebates > 0 {
+                        let _ = self.deposit(tx.message().fee_payer(), rebates);
+                    }
                 }
                 Ok(())
             })
@@ -8176,7 +8219,7 @@ pub(crate) mod tests {
                 return_data: None,
                 executed_units: 0,
                 accounts_data_len_delta: 0,
-                application_fees: HashMap::new(),
+                application_fees_with_rebates: ApplicationFeesWithRebates::new(),
             },
             tx_executor_cache: Rc::new(RefCell::new(TransactionExecutorCache::default())),
         }

@@ -118,6 +118,7 @@ pub struct InvokeContext<'a> {
     pub lamports_per_signature: u64,
     syscall_context: Vec<Option<SyscallContext>>,
     pub application_fees: HashMap<Pubkey, u64>,
+    pub total_rebates_for_application_fees: u64,
 }
 
 impl<'a> InvokeContext<'a> {
@@ -155,6 +156,7 @@ impl<'a> InvokeContext<'a> {
             lamports_per_signature,
             syscall_context: Vec::new(),
             application_fees,
+            total_rebates_for_application_fees: 0,
         }
     }
 

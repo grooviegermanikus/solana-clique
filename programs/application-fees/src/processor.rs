@@ -235,6 +235,9 @@ impl Processor {
         };
         // log message
         if lamports_rebated > 0 {
+            invoke_context.total_rebates_for_application_fees = invoke_context
+                .total_rebates_for_application_fees
+                .saturating_add(lamports_rebated);
             ic_msg!(
                 invoke_context,
                 "application fees rebated for writable account {} lamports {}",
@@ -275,6 +278,9 @@ impl Processor {
                         }
                     };
                     if lamports_rebated > 0 {
+                        invoke_context.total_rebates_for_application_fees = invoke_context
+                            .total_rebates_for_application_fees
+                            .saturating_add(lamports_rebated);
                         ic_msg!(
                             invoke_context,
                             "application fees rebated for writable account {} lamports {}",

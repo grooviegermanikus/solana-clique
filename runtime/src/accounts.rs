@@ -291,6 +291,36 @@ impl Accounts {
             };
         let mut accumulated_accounts_data_size: usize = 0;
 
+        // process application fees for writable accounts
+        let application_fees_pid: Pubkey = application_fees::id();
+        let application_fees: HashMap<Pubkey, u64> = account_keys
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| message.is_writable(*index))
+            .into_iter()
+            .map(|(_, key)| {
+                let (writable_account_fees, _) =
+                    Pubkey::find_program_address(&[&key.to_bytes()], &application_fees_pid);
+                let account = self
+                    .accounts_db
+                    .load_with_fixed_root(ancestors, &writable_account_fees);
+                match account {
+                    Some(x) => {
+                        let fee_structure =
+                            bincode::deserialize::<ApplicationFeeStructure>(x.0.data());
+                        if let Ok(fee_structure) = fee_structure {
+                            Some((*key, fee_structure.fee_lamports))
+                        } else {
+                            None
+                        }
+                    }
+                    None => None,
+                }
+            })
+            .filter(|x| x.is_some())
+            .map(|x| x.unwrap())
+            .collect();
+
         let mut accounts = account_keys
             .iter()
             .enumerate()
@@ -339,6 +369,8 @@ impl Accounts {
                             if i != 0 {
                                 warn!("Payer index should be 0! {:?}", tx);
                             }
+                            let application_fees_sum =
+                                application_fees.iter().map(|x| *x.1).sum::<u64>();
 
                             Self::validate_fee_payer(
                                 key,
@@ -347,7 +379,7 @@ impl Accounts {
                                 error_counters,
                                 rent_collector,
                                 feature_set,
-                                fee,
+                                fee.saturating_add(application_fees_sum),
                             )?;
 
                             validated_fee_payer = true;
@@ -414,36 +446,6 @@ impl Accounts {
         // the account_deps are truncated using e.g:
         // accounts.iter().take(message.account_keys.len())
         accounts.append(&mut account_deps);
-
-        // process application fees for writable accounts
-        let application_fees_pid: Pubkey = application_fees::id();
-        let application_fees: HashMap<Pubkey, u64> = account_keys
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| message.is_writable(*index))
-            .into_iter()
-            .map(|(_, key)| {
-                let (writable_account_fees, _) =
-                    Pubkey::find_program_address(&[&key.to_bytes()], &application_fees_pid);
-                let account = self
-                    .accounts_db
-                    .load_with_fixed_root(ancestors, &writable_account_fees);
-                match account {
-                    Some(x) => {
-                        let fee_structure =
-                            bincode::deserialize::<ApplicationFeeStructure>(x.0.data());
-                        if let Ok(fee_structure) = fee_structure {
-                            Some((*key, fee_structure.fee_lamports))
-                        } else {
-                            None
-                        }
-                    }
-                    None => None,
-                }
-            })
-            .filter(|x| x.is_some())
-            .map(|x| x.unwrap())
-            .collect();
 
         if validated_fee_payer {
             let program_indices = message
@@ -1599,7 +1601,7 @@ mod tests {
                 return_data: None,
                 executed_units: 0,
                 accounts_data_len_delta: 0,
-                application_fees: HashMap::new(),
+                application_fees_with_rebates: crate::bank::ApplicationFeesWithRebates::new(),
             },
             tx_executor_cache: Rc::new(RefCell::new(TransactionExecutorCache::default())),
         }
