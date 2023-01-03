@@ -45,6 +45,7 @@ pub struct ProcessedMessageInfo {
     /// The change in accounts data len
     pub accounts_data_len_delta: i64,
     pub application_fees: HashMap<Pubkey, u64>,
+    pub total_rebates_for_application_fees: u64,
 }
 
 impl MessageProcessor {
@@ -187,6 +188,7 @@ impl MessageProcessor {
         Ok(ProcessedMessageInfo {
             accounts_data_len_delta: invoke_context.get_accounts_data_meter().delta(),
             application_fees: invoke_context.application_fees,
+            total_rebates_for_application_fees: invoke_context.total_rebates_for_application_fees,
         })
     }
 }

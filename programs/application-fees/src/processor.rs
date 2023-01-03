@@ -189,6 +189,7 @@ impl Processor {
 
         let writable_account_key =
             instruction_context.get_instruction_account_key(transaction_context, 1)?;
+
         let writable_account = {
             if writable_account_key.eq(owner.get_key()) {
                 owner
@@ -226,6 +227,9 @@ impl Processor {
         };
         // log message
         if lamports_rebated > 0 {
+            invoke_context.total_rebates_for_application_fees = invoke_context
+                .total_rebates_for_application_fees
+                .saturating_add(lamports_rebated);
             ic_msg!(
                 invoke_context,
                 "application fees rebated for writable account {} lamports {}",
@@ -266,6 +270,9 @@ impl Processor {
                         }
                     };
                     if lamports_rebated > 0 {
+                        invoke_context.total_rebates_for_application_fees = invoke_context
+                            .total_rebates_for_application_fees
+                            .saturating_add(lamports_rebated);
                         ic_msg!(
                             invoke_context,
                             "application fees rebated for writable account {} lamports {}",

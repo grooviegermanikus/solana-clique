@@ -2410,7 +2410,8 @@ mod tests {
                 durable_nonce_fee: None,
                 executed_units: 0,
                 accounts_data_len_delta: 0,
-                application_fees: HashMap::new(),
+                application_fees_with_rebates:
+                    solana_runtime::bank::ApplicationFeesWithRebates::new(),
             },
             executors: Rc::new(RefCell::new(Executors::default())),
         }
