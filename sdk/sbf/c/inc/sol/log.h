@@ -109,6 +109,8 @@ static void sol_log_params(const SolParameters *params) {
     sol_log_64(0, 0, 0, 0, params->ka[i].executable);
     sol_log("  - Rent Epoch");
     sol_log_64(0, 0, 0, 0, params->ka[i].rent_epoch);
+    sol_log("  - Application Fees");
+    sol_log_64(0, 0, 0, 0, params->ka[i].application_fees);
   }
   sol_log("- Instruction data\0");
   sol_log_array(params->data, params->data_len);

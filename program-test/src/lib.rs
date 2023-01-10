@@ -548,8 +548,7 @@ impl ProgramTest {
                     panic!("Unable to locate {filename}");
                 })),
                 owner,
-                executable: false,
-                rent_epoch: 0,
+                ..Default::default()
             },
         );
     }
@@ -570,8 +569,7 @@ impl ProgramTest {
                 data: base64::decode(data_base64)
                     .unwrap_or_else(|err| panic!("Failed to base64 decode: {err}")),
                 owner,
-                executable: false,
-                rent_epoch: 0,
+                ..Default::default()
             },
         );
     }
@@ -619,8 +617,7 @@ impl ProgramTest {
                     lamports: Rent::default().minimum_balance(data.len()).min(1),
                     data,
                     owner: solana_sdk::bpf_loader::id(),
-                    executable: true,
-                    rent_epoch: 0,
+                    ..Default::default()
                 },
             );
         };

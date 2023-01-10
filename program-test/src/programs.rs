@@ -43,8 +43,7 @@ pub fn spl_programs(rent: &Rent) -> Vec<(Pubkey, AccountSharedData)> {
                     lamports: rent.minimum_balance(elf.len()).min(1),
                     data: elf.to_vec(),
                     owner: solana_sdk::bpf_loader::id(),
-                    executable: true,
-                    rent_epoch: 0,
+                    ..Default::default()
                 }),
             )
         })

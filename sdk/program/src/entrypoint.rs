@@ -299,7 +299,9 @@ pub unsafe fn deserialize<'a>(input: *mut u8) -> (&'a Pubkey, Vec<AccountInfo<'a
             offset += size_of::<u8>();
 
             #[allow(clippy::cast_ptr_alignment)]
-            let executable = *(input.add(offset) as *const u8) != 0;
+            let account_flags = *(input.add(offset) as *const u8);
+            let executable = account_flags & 1 > 0;
+            let has_application_fees = account_flags & (1<<7) > 0;
             offset += size_of::<u8>();
 
             // The original data length is stored here because these 4 bytes were
@@ -333,7 +335,7 @@ pub unsafe fn deserialize<'a>(input: *mut u8) -> (&'a Pubkey, Vec<AccountInfo<'a
             offset += (offset as *const u8).align_offset(BPF_ALIGN_OF_U128); // padding
 
             #[allow(clippy::cast_ptr_alignment)]
-            let rent_epoch = *(input.add(offset) as *const u64);
+            let rent_epoch_or_application_fees= *(input.add(offset) as *const u64);
             offset += size_of::<u64>();
 
             accounts.push(AccountInfo {
@@ -344,7 +346,8 @@ pub unsafe fn deserialize<'a>(input: *mut u8) -> (&'a Pubkey, Vec<AccountInfo<'a
                 data,
                 owner,
                 executable,
-                rent_epoch,
+                rent_epoch : if has_application_fees {0} else {rent_epoch_or_application_fees},
+                application_fees: if has_application_fees {rent_epoch_or_application_fees} else {0},
             });
         } else {
             offset += 7; // padding

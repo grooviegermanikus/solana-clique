@@ -44,6 +44,7 @@ pub struct UiAccount {
     pub executable: bool,
     pub rent_epoch: Epoch,
     pub space: Option<u64>,
+    pub application_fees : u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -131,6 +132,7 @@ impl UiAccount {
             executable: account.executable(),
             rent_epoch: account.rent_epoch(),
             space: Some(space as u64),
+            application_fees: account.application_fees(),
         }
     }
 
@@ -157,6 +159,7 @@ impl UiAccount {
             Pubkey::from_str(&self.owner).ok()?,
             self.executable,
             self.rent_epoch,
+            self.application_fees,
         ))
     }
 }

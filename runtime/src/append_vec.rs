@@ -4,6 +4,8 @@
 //!
 //! <https://docs.solana.com/implemented-proposals/persistent-account-storage>
 
+use solana_sdk::account::get_account_flags;
+
 use {
     crate::storable_accounts::StorableAccounts,
     log::*,
@@ -171,6 +173,8 @@ pub struct AccountMeta {
     pub executable: bool,
     /// the epoch at which this account will next owe rent
     pub rent_epoch: Epoch,
+    /// application fees
+    pub application_fees: u64,
 }
 
 impl<'a, T: ReadableAccount> From<&'a T> for AccountMeta {
@@ -180,6 +184,7 @@ impl<'a, T: ReadableAccount> From<&'a T> for AccountMeta {
             owner: *account.owner(),
             executable: account.executable(),
             rent_epoch: account.rent_epoch(),
+            application_fees: account.application_fees(),
         }
     }
 }
@@ -209,11 +214,13 @@ pub struct StoredAccountMeta<'a> {
 impl<'a> StoredAccountMeta<'a> {
     /// Return a new Account by copying all the data referenced by the `StoredAccountMeta`.
     pub fn clone_account(&self) -> AccountSharedData {
+        let has_application_fees = self.account_meta.application_fees > 0;
+        let account_flags = get_account_flags(self.account_meta.executable, has_application_fees);
         AccountSharedData::from(Account {
             lamports: self.account_meta.lamports,
             owner: self.account_meta.owner,
-            executable: self.account_meta.executable,
-            rent_epoch: self.account_meta.rent_epoch,
+            account_flags,
+            rent_epoch_or_application_fees: if has_application_fees {self.account_meta.application_fees} else {self.account_meta.rent_epoch},
             data: self.data.to_vec(),
         })
     }
@@ -651,6 +658,7 @@ impl AppendVec {
                     owner: *account.owner(),
                     rent_epoch: account.rent_epoch(),
                     executable: account.executable(),
+                    application_fees: account.application_fees(),
                 })
                 .unwrap_or_default();
 
@@ -696,6 +704,8 @@ impl AppendVec {
 
 #[cfg(test)]
 pub mod tests {
+    use solana_sdk::account::update_is_executable;
+
     use {
         super::{test_utils::*, *},
         crate::accounts_db::INCLUDE_SLOT_IN_HASH_TESTS,
@@ -926,12 +936,14 @@ pub mod tests {
             owner: Pubkey::new_unique(),
             executable: true,
             rent_epoch: 3,
+            application_fees: 0,
         };
+
         let def2_account = Account {
             lamports: def1.lamports,
             owner: def1.owner,
-            executable: def1.executable,
-            rent_epoch: def1.rent_epoch,
+            account_flags: update_is_executable(0, def1.application_fees),
+            rent_epoch_or_application_fees: def1.rent_epoch,
             data: Vec::new(),
         };
         let def2 = AccountMeta::from(&def2_account);

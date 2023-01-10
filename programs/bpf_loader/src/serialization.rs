@@ -209,8 +209,8 @@ fn serialize_parameters_unaligned(
                 + size_of::<u64>()  // data len
                 + account.get_data().len() // data
                 + size_of::<Pubkey>() // owner
-                + size_of::<u8>() // executable
-                + size_of::<u64>(); // rent_epoch
+                + size_of::<u8>() // account_flags
+                + size_of::<u64>(); // rent_epoch_or_application_fees
             }
         }
     }
@@ -433,7 +433,7 @@ pub fn deserialize_parameters_aligned(
             }
             start += *pre_len + MAX_PERMITTED_DATA_INCREASE; // data
             start += (start as *const u8).align_offset(BPF_ALIGN_OF_U128);
-            start += size_of::<u64>(); // rent_epoch
+            start += size_of::<u64>(); // rent_epoch_or_application_fees
             if borrowed_account.get_owner().to_bytes() != owner {
                 // Change the owner at the end so that we are allowed to change the lamports and data before
                 borrowed_account.set_owner(owner)?;
@@ -445,6 +445,8 @@ pub fn deserialize_parameters_aligned(
 
 #[cfg(test)]
 mod tests {
+    use solana_sdk::account::{is_executable, has_application_fees};
+
     use {
         super::*,
         solana_program_runtime::invoke_context::{prepare_mock_invoke_context, InvokeContext},
@@ -533,8 +535,8 @@ mod tests {
                     lamports: 0,
                     data: vec![],
                     owner: bpf_loader::id(),
-                    executable: true,
-                    rent_epoch: 0,
+                    account_flags: 0x1,
+                    rent_epoch_or_application_fees: 0,
                 }),
             )];
 
@@ -548,8 +550,8 @@ mod tests {
                         lamports: 0,
                         data: vec![],
                         owner: program_id,
-                        executable: false,
-                        rent_epoch: 0,
+                        account_flags: 0,
+                        rent_epoch_or_application_fees: 0,
                     }),
                 ));
             }
@@ -628,8 +630,8 @@ mod tests {
                     lamports: 0,
                     data: vec![],
                     owner: bpf_loader::id(),
-                    executable: true,
-                    rent_epoch: 0,
+                    account_flags: 0x1,
+                    rent_epoch_or_application_fees: 0,
                 }),
             ),
             (
@@ -638,8 +640,8 @@ mod tests {
                     lamports: 1,
                     data: vec![1u8, 2, 3, 4, 5],
                     owner: bpf_loader::id(),
-                    executable: false,
-                    rent_epoch: 100,
+                    account_flags: 0,
+                    rent_epoch_or_application_fees: 100,
                 }),
             ),
             (
@@ -648,8 +650,8 @@ mod tests {
                     lamports: 2,
                     data: vec![11u8, 12, 13, 14, 15, 16, 17, 18, 19],
                     owner: bpf_loader::id(),
-                    executable: true,
-                    rent_epoch: 200,
+                    account_flags: 0x1,
+                    rent_epoch_or_application_fees: 200,
                 }),
             ),
             (
@@ -658,8 +660,8 @@ mod tests {
                     lamports: 3,
                     data: vec![],
                     owner: bpf_loader::id(),
-                    executable: false,
-                    rent_epoch: 3100,
+                    account_flags: 0,
+                    rent_epoch_or_application_fees: 3100,
                 }),
             ),
             (
@@ -668,8 +670,8 @@ mod tests {
                     lamports: 4,
                     data: vec![1u8, 2, 3, 4, 5],
                     owner: bpf_loader::id(),
-                    executable: false,
-                    rent_epoch: 100,
+                    account_flags: 0,
+                    rent_epoch_or_application_fees: 100,
                 }),
             ),
             (
@@ -678,8 +680,8 @@ mod tests {
                     lamports: 5,
                     data: vec![11u8, 12, 13, 14, 15, 16, 17, 18, 19],
                     owner: bpf_loader::id(),
-                    executable: true,
-                    rent_epoch: 200,
+                    account_flags: 0x1,
+                    rent_epoch_or_application_fees: 200,
                 }),
             ),
             (
@@ -688,8 +690,8 @@ mod tests {
                     lamports: 6,
                     data: vec![],
                     owner: bpf_loader::id(),
-                    executable: false,
-                    rent_epoch: 3100,
+                    account_flags: 0,
+                    rent_epoch_or_application_fees: 3100,
                 }),
             ),
         ];
@@ -767,6 +769,7 @@ mod tests {
             assert_eq!(account.owner(), account_info.owner);
             assert_eq!(account.executable(), account_info.executable);
             assert_eq!(account.rent_epoch(), account_info.rent_epoch);
+            assert_eq!(account.application_fees(), account_info.application_fees);
 
             assert_eq!(
                 (*account_info.lamports.borrow() as *const u64).align_offset(BPF_ALIGN_OF_U128),
@@ -839,6 +842,7 @@ mod tests {
             assert_eq!(account.owner(), account_info.owner);
             assert_eq!(account.executable(), account_info.executable);
             assert_eq!(account.rent_epoch(), account_info.rent_epoch);
+            assert_eq!(account.application_fees(), account_info.application_fees);
         }
 
         deserialize_parameters(
@@ -906,12 +910,15 @@ mod tests {
                 let owner: &Pubkey = &*(input.add(offset) as *const Pubkey);
                 offset += size_of::<Pubkey>();
 
+                let account_flags = *(input.add(offset) as *const u8);
+
                 #[allow(clippy::cast_ptr_alignment)]
-                let executable = *(input.add(offset) as *const u8) != 0;
+                let executable= is_executable(account_flags);
+                let has_application_fees = has_application_fees(account_flags);
                 offset += size_of::<u8>();
 
                 #[allow(clippy::cast_ptr_alignment)]
-                let rent_epoch = *(input.add(offset) as *const u64);
+                let rent_epoch_or_application_fees = *(input.add(offset) as *const u64);
                 offset += size_of::<u64>();
 
                 accounts.push(AccountInfo {
@@ -922,7 +929,8 @@ mod tests {
                     data,
                     owner,
                     executable,
-                    rent_epoch,
+                    rent_epoch: if has_application_fees {0} else {rent_epoch_or_application_fees},
+                    application_fees: if has_application_fees {rent_epoch_or_application_fees} else {0},
                 });
             } else {
                 // duplicate account, clone the original

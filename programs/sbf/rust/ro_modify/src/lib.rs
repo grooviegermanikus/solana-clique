@@ -37,6 +37,7 @@ struct SolAccountInfo {
     is_signer: bool,
     is_writable: bool,
     executable: bool,
+    application_fees: u64,
 }
 
 /// Rust representation of C's SolSignerSeed
@@ -66,6 +67,7 @@ const READONLY_ACCOUNTS: &[SolAccountInfo] = &[
         rent_epoch: 0,
         data_addr: 0x400000060,
         data_len: 14,
+        application_fees: 0,
     },
     SolAccountInfo {
         is_signer: true,
@@ -77,6 +79,7 @@ const READONLY_ACCOUNTS: &[SolAccountInfo] = &[
         rent_epoch: 0,
         data_addr: 0x4000028d0,
         data_len: 0,
+        application_fees: 0,
     },
 ];
 

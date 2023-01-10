@@ -162,6 +162,8 @@ impl ReadOnlyAccountsCache {
 
 #[cfg(test)]
 mod tests {
+    use solana_sdk::account::get_account_flags;
+
     use {
         super::*,
         rand::{
@@ -270,11 +272,13 @@ mod tests {
             } else {
                 let mut data = vec![0u8; DATA_SIZE];
                 rng.fill(&mut data[..]);
+                let executable : bool = rng.gen();
+                let has_application_fees = rng.gen();
                 let account = AccountSharedData::from(Account {
                     lamports: rng.gen(),
                     data,
-                    executable: rng.gen(),
-                    rent_epoch: rng.gen(),
+                    account_flags: get_account_flags(executable, has_application_fees),
+                    rent_epoch_or_application_fees: rng.gen(),
                     owner: Pubkey::default(),
                 });
                 let slot = *slots.choose(&mut rng).unwrap();

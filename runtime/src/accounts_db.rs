@@ -863,6 +863,22 @@ impl<'a> ReadableAccount for LoadedAccount<'a> {
             LoadedAccount::Cached(cached_account) => cached_account.account.rent_epoch(),
         }
     }
+    fn application_fees(&self) -> u64 {
+        match self {
+            LoadedAccount::Stored(stored_account_meta) => {
+                stored_account_meta.account_meta.application_fees
+            },
+            LoadedAccount::Cached(cached_account) => cached_account.account.application_fees(),
+        }
+    }
+    fn has_application_fees(&self) -> bool {
+        match self{
+            LoadedAccount::Stored(stored_account_meta) => {
+                stored_account_meta.account_meta.application_fees > 0
+            },
+            LoadedAccount::Cached(cached_account) => cached_account.account.has_application_fees(),
+        }
+    }
     fn to_account_shared_data(&self) -> AccountSharedData {
         match self {
             LoadedAccount::Stored(_stored_account_meta) => AccountSharedData::create(
@@ -871,6 +887,7 @@ impl<'a> ReadableAccount for LoadedAccount<'a> {
                 *self.owner(),
                 self.executable(),
                 self.rent_epoch(),
+                self.application_fees(),
             ),
             // clone here to prevent data copy
             LoadedAccount::Cached(cached_account) => cached_account.account.clone(),
@@ -2144,6 +2161,12 @@ impl<'a> ReadableAccount for StoredAccountMeta<'a> {
     }
     fn rent_epoch(&self) -> Epoch {
         self.account_meta.rent_epoch
+    }
+    fn application_fees(&self) -> u64 {
+        self.account_meta.application_fees
+    }
+    fn has_application_fees(&self) -> bool {
+        self.account_meta.application_fees > 0
     }
 }
 
@@ -5990,6 +6013,7 @@ impl AccountsDb {
             account.data(),
             pubkey,
             include_slot,
+            account.application_fees(),
         )
     }
 
@@ -6002,6 +6026,7 @@ impl AccountsDb {
         data: &[u8],
         pubkey: &Pubkey,
         include_slot: IncludeSlotInHash,
+        application_fees: u64,
     ) -> Hash {
         if lamports == 0 {
             return Hash::default();
@@ -6023,6 +6048,7 @@ impl AccountsDb {
         }
 
         hasher.update(&rent_epoch.to_le_bytes());
+        hasher.update(&application_fees.to_le_bytes());
 
         hasher.update(data);
 
@@ -9429,6 +9455,8 @@ impl AccountsDb {
 
 #[cfg(test)]
 pub mod tests {
+    use solana_sdk::account::{update_has_application_fees, update_is_executable};
+
     use {
         super::*,
         crate::{
@@ -9602,6 +9630,7 @@ pub mod tests {
             owner: Pubkey::new(&[2; 32]),
             executable: false,
             rent_epoch: 0,
+            application_fees:0,
         };
         let offset = 3;
         let hash = Hash::new(&[2; 32]);
@@ -9699,6 +9728,7 @@ pub mod tests {
             owner,
             executable,
             rent_epoch,
+            application_fees:0,
         };
         let offset = 99;
         let stored_size = 101;
@@ -12325,13 +12355,14 @@ pub mod tests {
             owner,
             executable,
             rent_epoch,
+            application_fees: 0,
         };
         let data = Vec::new();
         let account = Account {
             lamports,
             owner,
-            executable,
-            rent_epoch,
+            account_flags: update_is_executable(account_flags, executable),
+            rent_epoch_or_application_fees: rent_epoch,
             data: data.clone(),
         };
         let offset = 99;

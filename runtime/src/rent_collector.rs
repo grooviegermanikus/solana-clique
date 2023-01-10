@@ -393,7 +393,7 @@ mod tests {
         let (mut created_account, mut existing_account) = {
             let account = AccountSharedData::from(Account {
                 lamports: old_lamports,
-                rent_epoch: old_epoch,
+                rent_epoch_or_application_fees: old_epoch,
                 ..Account::default()
             });
 
@@ -501,7 +501,7 @@ mod tests {
         let mut account = AccountSharedData::from(Account {
             lamports: account_lamports, // <-- must be below rent-exempt amount
             data: vec![u8::default(); account_data_len],
-            rent_epoch: account_rent_epoch,
+            rent_epoch_or_application_fees: account_rent_epoch,
             ..Account::default()
         });
         let rent_collector = default_rent_collector_clone_with_epoch(account_rent_epoch + 1);

@@ -457,8 +457,8 @@ impl RpcSender for MockSender {
                     lamports: 1_000_000,
                     data: vec![],
                     owner: pubkey,
-                    executable: false,
-                    rent_epoch: 0,
+                    account_flags: 0,
+                    rent_epoch_or_application_fees: 0,
                 };
                 serde_json::to_value(vec![
                     RpcKeyedAccount {

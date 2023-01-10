@@ -3528,8 +3528,8 @@ impl Bank {
             lamports,
             owner,
             data: vec![],
-            executable: true,
-            rent_epoch,
+            account_flags: 1,
+            rent_epoch_or_application_fees: rent_epoch,
         });
         self.store_account_and_update_capitalization(program_id, &account);
     }
@@ -7806,8 +7806,8 @@ impl Bank {
                 owner: inline_spl_token::id(),
                 data: inline_spl_token::native_mint::ACCOUNT_DATA.to_vec(),
                 lamports: sol_to_lamports(1.),
-                executable: false,
-                rent_epoch: self.epoch() + 1,
+                account_flags: 0,
+                rent_epoch_or_application_fees: self.epoch() + 1,
             });
 
             // As a workaround for
@@ -15618,7 +15618,7 @@ pub(crate) mod tests {
         let executor: Arc<dyn Executor> = Arc::new(TestExecutor {});
         let executable_account = AccountSharedData::from(Account {
             owner: bpf_loader_upgradeable::id(),
-            executable: true,
+            account_flags: 1,
             ..Account::default()
         });
 

@@ -2318,6 +2318,7 @@ mod tests {
                 solana_address_lookup_table_program::id(),
                 false,
                 0,
+                0,
             )
         };
         accounts.store_slow_uncached(0, &table_key, &table_account);

@@ -1,3 +1,5 @@
+use log::warn;
+
 use {
     crate::{
         clock::{Epoch, INITIAL_RENT_EPOCH},
@@ -31,9 +33,25 @@ pub struct Account {
     /// the program that owns this account. If executable, the program that loads this account.
     pub owner: Pubkey,
     /// this account's data contains a loaded program (and is now read-only)
-    pub executable: bool,
-    /// the epoch at which this account will next owe rent
-    pub rent_epoch: Epoch,
+    /// 0 -> is executable
+    /// 7 -> is has application fees
+    pub account_flags: u8,
+    /// the epoch at which this account will next owe rent, or application fees
+    pub rent_epoch_or_application_fees: u64,
+}
+
+const EXECUTABLE_BIT : u8 = 0x1;
+const APPLICATION_FEE_PRESENCE_BIT : u8 = 0x1 << 7;
+
+pub fn get_account_flags(executable: bool, has_application_fees: bool) -> u8 {
+    let mut account_flags : u8 = 0;
+    if  executable {
+        account_flags |= EXECUTABLE_BIT;
+    }
+    if has_application_fees {
+        account_flags |= APPLICATION_FEE_PRESENCE_BIT;
+    }
+    account_flags
 }
 
 // mod because we need 'Account' below to have the name 'Account' to match expected serialization
@@ -53,8 +71,8 @@ mod account_serialize {
         data: &'a [u8],
         // can't be &pubkey because abi example doesn't support it
         owner: Pubkey,
-        executable: bool,
-        rent_epoch: Epoch,
+        account_flags: u8,
+        rent_epoch_or_application_fees: u64,
     }
 
     /// allows us to implement serialize on AccountSharedData that is equivalent to Account::serialize without making a copy of the Vec<u8>
@@ -69,8 +87,8 @@ mod account_serialize {
             lamports: account.lamports(),
             data: account.data(),
             owner: *account.owner(),
-            executable: account.executable(),
-            rent_epoch: account.rent_epoch(),
+            account_flags : super::get_account_flags(account.executable(), account.has_application_fees()),
+            rent_epoch_or_application_fees : if account.has_application_fees() {account.application_fees()} else {account.rent_epoch()},
         };
         temp.serialize(serializer)
     }
@@ -107,9 +125,36 @@ pub struct AccountSharedData {
     /// the program that owns this account. If executable, the program that loads this account.
     owner: Pubkey,
     /// this account's data contains a loaded program (and is now read-only)
-    executable: bool,
+    /// bit 0 for executable
+    /// bit 7 for has application fees
+    account_flags: u8,
     /// the epoch at which this account will next owe rent
-    rent_epoch: Epoch,
+    rent_epoch_or_application_fees: u64,
+}
+
+// get bit from account flags to test if account is executable
+pub fn is_executable(account_flags : u8) -> bool {
+    account_flags & EXECUTABLE_BIT > 0
+}
+
+pub fn has_application_fees(account_flags : u8) -> bool {
+    account_flags & APPLICATION_FEE_PRESENCE_BIT > 0
+}
+
+pub fn update_is_executable(account_flags: u8, executable: bool) -> u8 {
+    if executable { account_flags | EXECUTABLE_BIT } else { account_flags & (!EXECUTABLE_BIT) }
+}
+
+pub fn update_has_application_fees(account_flags: u8, has_application_fees: bool) -> u8 {
+    if has_application_fees { account_flags | APPLICATION_FEE_PRESENCE_BIT } else { account_flags & (!APPLICATION_FEE_PRESENCE_BIT) }
+}
+
+pub fn get_rent_epoch(account_flags: u8, rent_epoch_or_application_fees: u64) -> Epoch {
+    if !has_application_fees(account_flags) {rent_epoch_or_application_fees} else {0}
+}
+
+pub fn get_application_fees(account_flags: u8, rent_epoch_or_application_fees: u64) -> Epoch {
+    if has_application_fees(account_flags) {rent_epoch_or_application_fees} else {0}
 }
 
 /// Compares two ReadableAccounts
@@ -121,6 +166,7 @@ pub fn accounts_equal<T: ReadableAccount, U: ReadableAccount>(me: &T, other: &U)
         && me.rent_epoch() == other.rent_epoch()
         && me.owner() == other.owner()
         && me.data() == other.data()
+        && me.application_fees() == other.application_fees()
 }
 
 impl From<AccountSharedData> for Account {
@@ -130,8 +176,8 @@ impl From<AccountSharedData> for Account {
             lamports: other.lamports,
             data: std::mem::take(account_data),
             owner: other.owner,
-            executable: other.executable,
-            rent_epoch: other.rent_epoch,
+            account_flags: other.account_flags,
+            rent_epoch_or_application_fees: other.rent_epoch_or_application_fees,
         }
     }
 }
@@ -142,8 +188,8 @@ impl From<Account> for AccountSharedData {
             lamports: other.lamports,
             data: Arc::new(other.data),
             owner: other.owner,
-            executable: other.executable,
-            rent_epoch: other.rent_epoch,
+            account_flags: other.account_flags,
+            rent_epoch_or_application_fees: other.rent_epoch_or_application_fees,
         }
     }
 }
@@ -178,12 +224,14 @@ pub trait WritableAccount: ReadableAccount {
     fn copy_into_owner_from_slice(&mut self, source: &[u8]);
     fn set_executable(&mut self, executable: bool);
     fn set_rent_epoch(&mut self, epoch: Epoch);
+    fn set_application_fees(&mut self, application_fees: u64);
     fn create(
         lamports: u64,
         data: Vec<u8>,
         owner: Pubkey,
         executable: bool,
         rent_epoch: Epoch,
+        application_fees : u64,
     ) -> Self;
 }
 
@@ -193,6 +241,8 @@ pub trait ReadableAccount: Sized {
     fn owner(&self) -> &Pubkey;
     fn executable(&self) -> bool;
     fn rent_epoch(&self) -> Epoch;
+    fn has_application_fees(&self) -> bool;
+    fn application_fees(&self) -> u64;
     fn to_account_shared_data(&self) -> AccountSharedData {
         AccountSharedData::create(
             self.lamports(),
@@ -200,6 +250,7 @@ pub trait ReadableAccount: Sized {
             *self.owner(),
             self.executable(),
             self.rent_epoch(),
+            self.application_fees(),
         )
     }
 }
@@ -215,10 +266,16 @@ impl ReadableAccount for Account {
         &self.owner
     }
     fn executable(&self) -> bool {
-        self.executable
+        is_executable(self.account_flags)
     }
     fn rent_epoch(&self) -> Epoch {
-        self.rent_epoch
+        get_rent_epoch(self.account_flags, self.rent_epoch_or_application_fees)
+    }
+    fn application_fees(&self) -> u64 {
+        get_application_fees(self.account_flags, self.rent_epoch_or_application_fees)
+    }
+    fn has_application_fees(&self) -> bool {
+        has_application_fees(self.account_flags)
     }
 }
 
@@ -239,10 +296,30 @@ impl WritableAccount for Account {
         self.owner.as_mut().copy_from_slice(source);
     }
     fn set_executable(&mut self, executable: bool) {
-        self.executable = executable;
+        self.account_flags = if executable { self.account_flags | EXECUTABLE_BIT } else { self.account_flags & (!0x1) };
     }
     fn set_rent_epoch(&mut self, epoch: Epoch) {
-        self.rent_epoch = epoch;
+        if has_application_fees(self.account_flags){
+            warn!("Account: cannot set rent epoch for account which has application fees");
+            return;
+        }
+        self.rent_epoch_or_application_fees = epoch;
+    }
+    fn set_application_fees(&mut self, application_fees: u64) {
+        // case where we want to remove application fee for the account
+        if application_fees == 0 {
+            if has_application_fees(self.account_flags) {
+                self.rent_epoch_or_application_fees = 0;
+            }
+            return;
+        }
+        if !has_application_fees(self.account_flags) {
+            if self.rent_epoch_or_application_fees > 0 {
+                warn!("Account: cannot set application fees for account which has rent epoch");
+            }
+            self.account_flags |= APPLICATION_FEE_PRESENCE_BIT;
+        }
+        self.rent_epoch_or_application_fees = application_fees;
     }
     fn create(
         lamports: u64,
@@ -250,13 +327,18 @@ impl WritableAccount for Account {
         owner: Pubkey,
         executable: bool,
         rent_epoch: Epoch,
+        application_fees : u64,
     ) -> Self {
+        let has_application_fees = application_fees > 0;
+        if application_fees > 0 && rent_epoch > 0 {
+            warn!("Account::create has both rent epoch and application fees");
+        }
         Account {
             lamports,
             data,
             owner,
-            executable,
-            rent_epoch,
+            account_flags: get_account_flags(executable, has_application_fees),
+            rent_epoch_or_application_fees : if has_application_fees {application_fees} else {rent_epoch},
         }
     }
 }
@@ -278,10 +360,30 @@ impl WritableAccount for AccountSharedData {
         self.owner.as_mut().copy_from_slice(source);
     }
     fn set_executable(&mut self, executable: bool) {
-        self.executable = executable;
+        self.account_flags = update_is_executable(self.account_flags, executable);
     }
     fn set_rent_epoch(&mut self, epoch: Epoch) {
-        self.rent_epoch = epoch;
+        if has_application_fees(self.account_flags){
+            warn!("AccountSharedData: cannot set rent epoch for account which has application fees");
+            return;
+        }
+        self.rent_epoch_or_application_fees = epoch;
+    }
+    fn set_application_fees(&mut self, application_fees: u64) {
+        // case where we want to remove application fee for the account
+        if application_fees == 0 {
+            if has_application_fees(self.account_flags) {
+                self.rent_epoch_or_application_fees = 0;
+            }
+            return;
+        }
+        if !has_application_fees(self.account_flags) {
+            if self.rent_epoch_or_application_fees > 0 {
+                warn!("AccountSharedData: cannot set application fees for account which has rent epoch");
+            }
+            self.account_flags |= APPLICATION_FEE_PRESENCE_BIT;
+        }
+        self.rent_epoch_or_application_fees = application_fees;
     }
     fn create(
         lamports: u64,
@@ -289,13 +391,18 @@ impl WritableAccount for AccountSharedData {
         owner: Pubkey,
         executable: bool,
         rent_epoch: Epoch,
+        application_fees: u64,
     ) -> Self {
+        let has_app_fees = application_fees > 0;
+        if rent_epoch > 0 && application_fees > 0 {
+            warn!("AccountSharedData::create has both rent epoch and application fees");
+        }
         AccountSharedData {
             lamports,
             data: Arc::new(data),
             owner,
-            executable,
-            rent_epoch,
+            account_flags: get_account_flags(executable, has_app_fees),
+            rent_epoch_or_application_fees : if has_app_fees {application_fees} else {rent_epoch},
         }
     }
 }
@@ -311,14 +418,20 @@ impl ReadableAccount for AccountSharedData {
         &self.owner
     }
     fn executable(&self) -> bool {
-        self.executable
+        is_executable(self.account_flags)
     }
     fn rent_epoch(&self) -> Epoch {
-        self.rent_epoch
+        get_rent_epoch(self.account_flags, self.rent_epoch_or_application_fees)
     }
     fn to_account_shared_data(&self) -> AccountSharedData {
         // avoid data copy here
         self.clone()
+    }
+    fn application_fees(&self) -> u64 {
+        get_application_fees(self.account_flags, self.rent_epoch_or_application_fees)
+    }
+    fn has_application_fees(&self) -> bool {
+        has_application_fees(self.account_flags)
     }
 }
 
@@ -333,20 +446,31 @@ impl ReadableAccount for Ref<'_, AccountSharedData> {
         &self.owner
     }
     fn executable(&self) -> bool {
-        self.executable
+        is_executable(self.account_flags)
     }
     fn rent_epoch(&self) -> Epoch {
-        self.rent_epoch
+        get_rent_epoch(self.account_flags, self.rent_epoch_or_application_fees)
     }
     fn to_account_shared_data(&self) -> AccountSharedData {
+        let has_app_fees = self.application_fees() > 0;
+        if self.rent_epoch() > 0 && has_app_fees {
+            warn!("Ref::AccountSharedData::create has both rent epoch and application fees");
+        }
+
         AccountSharedData {
             lamports: self.lamports(),
             // avoid data copy here
             data: Arc::clone(&self.data),
             owner: *self.owner(),
-            executable: self.executable(),
-            rent_epoch: self.rent_epoch(),
+            account_flags: get_account_flags(self.executable(), has_app_fees),
+            rent_epoch_or_application_fees: if has_app_fees {self.application_fees()} else {self.rent_epoch()},
         }
+    }
+    fn application_fees(&self) -> u64 {
+        get_application_fees(self.account_flags, self.rent_epoch_or_application_fees)
+    }
+    fn has_application_fees(&self) -> bool {
+        has_application_fees(self.account_flags)
     }
 }
 
@@ -361,10 +485,16 @@ impl ReadableAccount for Ref<'_, Account> {
         &self.owner
     }
     fn executable(&self) -> bool {
-        self.executable
+        is_executable(self.account_flags)
     }
     fn rent_epoch(&self) -> Epoch {
-        self.rent_epoch
+        get_rent_epoch(self.account_flags, self.rent_epoch_or_application_fees)
+    }
+    fn application_fees(&self) -> u64 {
+        get_application_fees(self.account_flags, self.rent_epoch_or_application_fees)
+    }
+    fn has_application_fees(&self) -> bool {
+        has_application_fees(self.account_flags)
     }
 }
 
@@ -375,7 +505,8 @@ fn debug_fmt<T: ReadableAccount>(item: &T, f: &mut fmt::Formatter<'_>) -> fmt::R
         .field("data.len", &item.data().len())
         .field("owner", &item.owner())
         .field("executable", &item.executable())
-        .field("rent_epoch", &item.rent_epoch());
+        .field("rent_epoch", &item.rent_epoch())
+        .field("application_fees", &item.application_fees());
     debug_account_data(item.data(), &mut f);
 
     f.finish()
@@ -400,6 +531,7 @@ fn shared_new<T: WritableAccount>(lamports: u64, space: usize, owner: &Pubkey) -
         *owner,
         bool::default(),
         Epoch::default(),
+        0,
     )
 }
 
@@ -415,6 +547,7 @@ fn shared_new_rent_epoch<T: WritableAccount>(
         *owner,
         bool::default(),
         rent_epoch,
+        0,
     )
 }
 
@@ -438,6 +571,7 @@ fn shared_new_data<T: serde::Serialize, U: WritableAccount>(
         *owner,
         bool::default(),
         Epoch::default(),
+        0,
     ))
 }
 fn shared_new_ref_data<T: serde::Serialize, U: WritableAccount>(
@@ -535,6 +669,12 @@ impl Account {
     pub fn serialize_data<T: serde::Serialize>(&mut self, state: &T) -> Result<(), bincode::Error> {
         shared_serialize_data(self, state)
     }
+    pub fn is_executable(&self) -> bool {
+        is_executable(self.account_flags)
+    }
+    pub fn has_application_fees(&self) -> bool {
+        has_application_fees(self.account_flags)
+    }
 }
 
 impl AccountSharedData {
@@ -627,6 +767,10 @@ impl AccountSharedData {
     pub fn serialize_data<T: serde::Serialize>(&mut self, state: &T) -> Result<(), bincode::Error> {
         shared_serialize_data(self, state)
     }
+
+    pub fn has_application_fees(&self) -> bool {
+        has_application_fees(self.account_flags)
+    }
 }
 
 pub type InheritableAccountFields = (u64, Epoch);
@@ -648,7 +792,7 @@ pub fn create_account_with_fields<S: Sysvar>(
     let data_len = S::size_of().max(bincode::serialized_size(sysvar).unwrap() as usize);
     let mut account = Account::new(lamports, data_len, &solana_program::sysvar::id());
     to_account::<S, Account>(sysvar, &mut account).unwrap();
-    account.rent_epoch = rent_epoch;
+    account.rent_epoch_or_application_fees = rent_epoch;
     account
 }
 
@@ -695,13 +839,14 @@ pub fn to_account<S: Sysvar, T: WritableAccount>(sysvar: &S, account: &mut T) ->
 /// Return the information required to construct an `AccountInfo`.  Used by the
 /// `AccountInfo` conversion implementations.
 impl solana_program::account_info::Account for Account {
-    fn get(&mut self) -> (&mut u64, &mut [u8], &Pubkey, bool, Epoch) {
+    fn get(&mut self) -> (&mut u64, &mut [u8], &Pubkey, bool, Epoch, u64) {
         (
             &mut self.lamports,
             &mut self.data,
             &self.owner,
-            self.executable,
-            self.rent_epoch,
+            is_executable(self.account_flags),
+            get_rent_epoch(self.account_flags, self.rent_epoch_or_application_fees),
+            get_application_fees(self.account_flags, self.rent_epoch_or_application_fees)
         )
     }
 }
@@ -713,6 +858,9 @@ pub fn create_is_signer_account_infos<'a>(
     accounts
         .iter_mut()
         .map(|(key, is_signer, account)| {
+            let executable = account.executable();
+            let rent_epoch = account.rent_epoch();
+            let application_fees = account.application_fees();
             AccountInfo::new(
                 key,
                 *is_signer,
@@ -720,8 +868,9 @@ pub fn create_is_signer_account_infos<'a>(
                 &mut account.lamports,
                 &mut account.data,
                 &account.owner,
-                account.executable,
-                account.rent_epoch,
+                executable,
+                rent_epoch,
+                application_fees,
             )
         })
         .collect()
@@ -733,11 +882,11 @@ pub mod tests {
 
     fn make_two_accounts(key: &Pubkey) -> (Account, AccountSharedData) {
         let mut account1 = Account::new(1, 2, key);
-        account1.executable = true;
-        account1.rent_epoch = 4;
+        account1.account_flags = 1;
+        account1.rent_epoch_or_application_fees = 4;
         let mut account2 = AccountSharedData::new(1, 2, key);
-        account2.executable = true;
-        account2.rent_epoch = 4;
+        account2.account_flags = 1;
+        account2.rent_epoch_or_application_fees = 4;
         assert!(accounts_equal(&account1, &account2));
         (account1, account2)
     }
@@ -844,9 +993,9 @@ pub mod tests {
         assert_eq!(account.data().len(), 2);
         assert_eq!(account.owner, key);
         assert_eq!(account.owner(), &key);
-        assert!(account.executable);
+        assert!(is_executable(account.account_flags));
         assert!(account.executable());
-        assert_eq!(account.rent_epoch, 4);
+        assert_eq!(account.rent_epoch_or_application_fees, 4);
         assert_eq!(account.rent_epoch(), 4);
         let account = account2;
         assert_eq!(account.lamports, 1);
@@ -855,9 +1004,9 @@ pub mod tests {
         assert_eq!(account.data().len(), 2);
         assert_eq!(account.owner, key);
         assert_eq!(account.owner(), &key);
-        assert!(account.executable);
+        assert!(is_executable(account.account_flags));
         assert!(account.executable());
-        assert_eq!(account.rent_epoch, 4);
+        assert_eq!(account.rent_epoch_or_application_fees, 4);
         assert_eq!(account.rent_epoch(), 4);
     }
 
@@ -1012,27 +1161,27 @@ pub mod tests {
                     }
                 } else if field_index == 3 {
                     if pass == 0 {
-                        account1.executable = !account1.executable;
+                        account1.account_flags = update_is_executable(account1.account_flags, !is_executable(account1.account_flags));
                     } else if pass == 1 {
-                        account_expected.executable = !account_expected.executable;
-                        account2.set_executable(!account2.executable);
+                        account1.account_flags = update_is_executable(account1.account_flags, !is_executable(account1.account_flags));
+                        account2.set_executable(!is_executable(account2.account_flags));
                     } else if pass == 2 {
-                        account1.set_executable(!account1.executable);
+                        account1.account_flags = update_is_executable(account1.account_flags, !is_executable(account1.account_flags));
                     } else if pass == 3 {
-                        account_expected.executable = !account_expected.executable;
-                        account2.executable = !account2.executable;
+                        account_expected.account_flags = update_is_executable(account_expected.account_flags, !is_executable(account_expected.account_flags));
+                        account2.account_flags = update_is_executable(account2.account_flags, !is_executable(account2.account_flags));
                     }
                 } else if field_index == 4 {
                     if pass == 0 {
-                        account1.rent_epoch += 1;
+                        account1.rent_epoch_or_application_fees += 1;
                     } else if pass == 1 {
-                        account_expected.rent_epoch += 1;
-                        account2.set_rent_epoch(account2.rent_epoch + 1);
+                        account_expected.rent_epoch_or_application_fees += 1;
+                        account2.set_rent_epoch(account2.rent_epoch_or_application_fees + 1);
                     } else if pass == 2 {
-                        account1.set_rent_epoch(account1.rent_epoch + 1);
+                        account1.set_rent_epoch(account1.rent_epoch_or_application_fees + 1);
                     } else if pass == 3 {
-                        account_expected.rent_epoch += 1;
-                        account2.rent_epoch += 1;
+                        account_expected.rent_epoch_or_application_fees += 1;
+                        account2.rent_epoch_or_application_fees += 1;
                     }
                 }
 

@@ -120,6 +120,7 @@ impl AccountsUpdateNotifierImpl {
             data: account.data(),
             write_version,
             txn_signature: *txn_signature,
+            application_fees : account.application_fees(),
         })
     }
 
@@ -136,6 +137,7 @@ impl AccountsUpdateNotifierImpl {
             data: stored_account_meta.data,
             write_version: stored_account_meta.meta.write_version_obsolete,
             txn_signature: None,
+            application_fees: stored_account_meta.account_meta.application_fees,
         })
     }
 

@@ -137,7 +137,9 @@ impl PreAccount {
     pub fn update(&mut self, account: AccountSharedData) {
         let rent_epoch = self.account.rent_epoch();
         self.account = account;
-        self.account.set_rent_epoch(rent_epoch);
+        if rent_epoch > 0 {
+            self.account.set_rent_epoch(rent_epoch);
+        }
 
         self.changed = true;
     }

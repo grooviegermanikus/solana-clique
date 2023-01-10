@@ -1,5 +1,7 @@
 #![allow(clippy::integer_arithmetic)]
 
+use solana_sdk::account::update_is_executable;
+
 use {
     serial_test::serial,
     solana_bench_tps::{
@@ -34,12 +36,13 @@ use {
 };
 
 fn program_account(program_data: &[u8]) -> AccountSharedData {
+    let account_flags = update_is_executable(0, true);
     AccountSharedData::from(Account {
         lamports: Rent::default().minimum_balance(program_data.len()).min(1),
         data: program_data.to_vec(),
         owner: solana_sdk::bpf_loader::id(),
-        executable: true,
-        rent_epoch: 0,
+        account_flags : account_flags,
+        rent_epoch_or_application_fees: 0,
     })
 }
 

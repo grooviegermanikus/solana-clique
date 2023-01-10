@@ -36,6 +36,8 @@ pub struct ReplicaAccountInfo<'a> {
     /// with higher write_version should supersede the one with lower
     /// write_version.
     pub write_version: u64,
+
+    pub application_fees: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,6 +71,8 @@ pub struct ReplicaAccountInfoV2<'a> {
 
     /// First signature of the transaction caused this account modification
     pub txn_signature: Option<&'a Signature>,
+
+    pub application_fees : u64,
 }
 
 /// A wrapper to future-proof ReplicaAccountInfo handling.

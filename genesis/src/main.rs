@@ -1,6 +1,8 @@
 //! A command-line executable for generating the chain's genesis config.
 #![allow(clippy::integer_arithmetic)]
 
+use solana_sdk::account::update_is_executable;
+
 use {
     clap::{crate_description, crate_name, value_t, value_t_or_exit, App, Arg, ArgMatches},
     solana_clap_utils::{
@@ -607,14 +609,15 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                             eprintln!("Error: failed to read {program}: {err}");
                             process::exit(1);
                         });
+                    let account_flags = update_is_executable(0, true);
                     genesis_config.add_account(
                         address,
                         AccountSharedData::from(Account {
                             lamports: genesis_config.rent.minimum_balance(program_data.len()),
                             data: program_data,
-                            executable: true,
+                            account_flags,
                             owner: loader,
-                            rent_epoch: 0,
+                            rent_epoch_or_application_fees: 0,
                         }),
                     );
                 }

@@ -483,6 +483,7 @@ pub fn check_type_assumptions() {
             owner: &owner,
             executable: true,
             rent_epoch: 42,
+            application_fees: 0,
         };
         let account_info_addr = &account_info as *const _ as u64;
 

@@ -280,6 +280,7 @@ pub mod tests {
         let owner = Pubkey::default();
         let executable = false;
         let rent_epoch = 0;
+        let application_fees = 0;
         let meta = StoredMeta {
             write_version_obsolete: 5,
             pubkey: pk,
@@ -290,6 +291,7 @@ pub mod tests {
             owner,
             executable,
             rent_epoch,
+            application_fees,
         };
         let data = Vec::default();
         let offset = 99;
@@ -331,6 +333,7 @@ pub mod tests {
                             Pubkey::default(),
                             false,
                             0,
+                            0,
                         );
 
                         raw.push((
@@ -347,6 +350,7 @@ pub mod tests {
                                 owner: *account.owner(),
                                 executable: account.executable(),
                                 rent_epoch: account.rent_epoch(),
+                                application_fees: account.application_fees(),
                             },
                         ));
                     }

@@ -64,8 +64,8 @@ fn create_accounts() -> (
             lamports: 1,
             data: vote_account_data,
             owner: solana_vote_program::id(),
-            executable: false,
-            rent_epoch: 0,
+            account_flags: 0,
+            rent_epoch_or_application_fees: 0,
         }
     };
 

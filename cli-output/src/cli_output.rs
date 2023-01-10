@@ -195,6 +195,11 @@ impl fmt::Display for CliAccount {
             "Rent Epoch:",
             &self.keyed_account.account.rent_epoch.to_string(),
         )?;
+        writeln_name_value(
+            f,
+            "Application Fees:",
+            &self.keyed_account.account.application_fees.to_string(),
+        )?;
         Ok(())
     }
 }

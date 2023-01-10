@@ -388,6 +388,7 @@ struct SolAccountInfo {
     #[allow(dead_code)]
     is_writable: bool,
     executable: bool,
+    application_fees: u64,
 }
 
 /// Rust representation of C's SolSignerSeed
@@ -1620,8 +1621,8 @@ mod tests {
             lamports: 1,
             data,
             owner: program_id,
-            executable: false,
-            rent_epoch: 100,
+            account_flags: 0,
+            rent_epoch_or_application_fees: 100,
         });
         vec![
             (
@@ -1630,8 +1631,8 @@ mod tests {
                     lamports: 0,
                     data: vec![],
                     owner: bpf_loader::id(),
-                    executable: true,
-                    rent_epoch: 0,
+                    account_flags: 0,
+                    rent_epoch_or_application_fees: 0,
                 }),
                 false,
             ),
@@ -1780,6 +1781,7 @@ mod tests {
                 owner: unsafe { (owner_addr as *const Pubkey).as_ref() }.unwrap(),
                 executable: self.executable,
                 rent_epoch: self.rent_epoch,
+                application_fees: 0,
             };
 
             unsafe {

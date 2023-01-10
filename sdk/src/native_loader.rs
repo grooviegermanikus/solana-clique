@@ -24,8 +24,8 @@ pub fn create_loadable_account_with_fields(
         lamports,
         owner: id(),
         data: name.as_bytes().to_vec(),
-        executable: true,
-        rent_epoch,
+        account_flags: 0x1,
+        rent_epoch_or_application_fees: rent_epoch,
     })
 }
 

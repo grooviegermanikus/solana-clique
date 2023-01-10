@@ -389,6 +389,7 @@ fn output_account(
         println!("  slot: {slot}");
     }
     println!("  rent_epoch: {}", account.rent_epoch());
+    println!("  application_fees: {}", account.application_fees());
     println!("  data_len: {}", account.data().len());
     if print_account_data {
         let account_data = UiAccount::encode(pubkey, account, encoding, None, None).data;

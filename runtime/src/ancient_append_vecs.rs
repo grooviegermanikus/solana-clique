@@ -130,6 +130,7 @@ pub mod tests {
             owner: Pubkey::new(&[2; 32]),
             executable: false,
             rent_epoch: 0,
+            application_fees: 0,
         };
         let offset = 3;
         let hash = Hash::new(&[2; 32]);
