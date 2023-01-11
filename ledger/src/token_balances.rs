@@ -155,14 +155,14 @@ mod test {
             lamports: 100,
             data: data.to_vec(),
             owner: pubkey_from_spl_token(&spl_token::id()),
-            ..Default::default(),
+            ..Default::default()
         };
         let other_mint_pubkey = Pubkey::new_unique();
         let other_mint = Account {
             lamports: 100,
             data: data.to_vec(),
             owner: Pubkey::new_unique(), // !is_known_spl_token_id
-            ..Default::default(),
+            ..Default::default()
         };
 
         let token_owner = Pubkey::new_unique();
@@ -183,13 +183,13 @@ mod test {
             lamports: 100,
             data: data.to_vec(),
             owner: pubkey_from_spl_token(&spl_token::id()),
-            ..Default::default(),
+            ..Default::default()
         };
         let other_account = Account {
             lamports: 100,
             data: data.to_vec(),
             owner: Pubkey::new_unique(), // !is_known_spl_token_id
-            ..Default::default(),
+            ..Default::default()
         };
 
         let other_mint_data = TokenAccount {
@@ -209,7 +209,7 @@ mod test {
             lamports: 100,
             data: data.to_vec(),
             owner: pubkey_from_spl_token(&spl_token::id()),
-            ..Default::default(),
+            ..Default::default()
         };
 
         let mut accounts = BTreeMap::new();
@@ -313,14 +313,14 @@ mod test {
             lamports: 100,
             data: mint_data.to_vec(),
             owner: pubkey_from_spl_token(&spl_token_2022::id()),
-            ..Default::default(),
+            ..Default::default()
         };
         let other_mint_pubkey = Pubkey::new_unique();
         let other_mint = Account {
             lamports: 100,
             data: mint_data.to_vec(),
             owner: Pubkey::new_unique(),
-            ..Default::default(),
+            ..Default::default()
         };
 
         let token_owner = Pubkey::new_unique();
@@ -355,13 +355,13 @@ mod test {
             lamports: 100,
             data: account_data.to_vec(),
             owner: pubkey_from_spl_token(&spl_token_2022::id()),
-            ..Default::default(),
+            ..Default::default()
         };
         let other_account = Account {
             lamports: 100,
             data: account_data.to_vec(),
             owner: Pubkey::new_unique(),
-            ..Default::default(),
+            ..Default::default()
         };
 
         let other_mint_token_base = TokenAccount {
@@ -395,7 +395,7 @@ mod test {
             lamports: 100,
             data: account_data.to_vec(),
             owner: pubkey_from_spl_token(&spl_token_2022::id()),
-            ..Default::default(),
+            ..Default::default()
         };
 
         let mut accounts = BTreeMap::new();

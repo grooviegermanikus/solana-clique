@@ -890,7 +890,7 @@ fn process_program_deploy(
             .into());
         }
 
-        if !account.executable {
+        if !account.is_executable() {
             // Continue an initial deploy
             true
         } else if let Ok(UpgradeableLoaderState::Program {
@@ -2109,7 +2109,7 @@ fn complete_partial_program_init(
 ) -> Result<(Vec<Instruction>, u64), Box<dyn std::error::Error>> {
     let mut instructions: Vec<Instruction> = vec![];
     let mut balance_needed = 0;
-    if account.executable {
+    if account.is_executable() {
         return Err("Buffer account is already executable".into());
     }
     if account.owner != *loader_id && !system_program::check_id(&account.owner) {

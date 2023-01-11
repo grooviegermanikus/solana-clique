@@ -860,7 +860,6 @@ pub fn create_is_signer_account_infos<'a>(
         .map(|(key, is_signer, account)| {
             let executable = account.executable();
             let rent_epoch = account.rent_epoch();
-            let application_fees = account.application_fees();
             AccountInfo::new(
                 key,
                 *is_signer,
@@ -870,7 +869,6 @@ pub fn create_is_signer_account_infos<'a>(
                 &account.owner,
                 executable,
                 rent_epoch,
-                application_fees,
             )
         })
         .collect()

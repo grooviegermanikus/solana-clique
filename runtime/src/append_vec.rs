@@ -4,7 +4,7 @@
 //!
 //! <https://docs.solana.com/implemented-proposals/persistent-account-storage>
 
-use solana_sdk::account::get_account_flags;
+use solana_sdk::account::{get_account_flags, is_executable, has_application_fees, get_rent_epoch, get_application_fees};
 
 use {
     crate::storable_accounts::StorableAccounts,
@@ -170,11 +170,24 @@ pub struct AccountMeta {
     /// the program that owns this account. If executable, the program that loads this account.
     pub owner: Pubkey,
     /// this account's data contains a loaded program (and is now read-only)
-    pub executable: bool,
+    pub account_flags: u8,
     /// the epoch at which this account will next owe rent
-    pub rent_epoch: Epoch,
-    /// application fees
-    pub application_fees: u64,
+    pub rent_epoch_or_application_fees: u64,
+}
+
+impl AccountMeta {
+    pub fn is_executable(&self) -> bool {
+        is_executable(self.account_flags)
+    }
+    pub fn has_application_fees(&self) -> bool {
+        has_application_fees(self.account_flags)
+    }
+    pub fn rent_epoch(&self) -> Epoch {
+        get_rent_epoch(self.account_flags, self.rent_epoch_or_application_fees)
+    }
+    pub fn application_fees(&self) -> Epoch {
+        get_application_fees(self.account_flags, self.rent_epoch_or_application_fees)
+    }
 }
 
 impl<'a, T: ReadableAccount> From<&'a T> for AccountMeta {
@@ -182,9 +195,8 @@ impl<'a, T: ReadableAccount> From<&'a T> for AccountMeta {
         Self {
             lamports: account.lamports(),
             owner: *account.owner(),
-            executable: account.executable(),
-            rent_epoch: account.rent_epoch(),
-            application_fees: account.application_fees(),
+            account_flags: get_account_flags(account.executable(), account.has_application_fees()),
+            rent_epoch_or_application_fees: if account.has_application_fees() {account.application_fees()} else {account.rent_epoch()},
         }
     }
 }
@@ -214,13 +226,11 @@ pub struct StoredAccountMeta<'a> {
 impl<'a> StoredAccountMeta<'a> {
     /// Return a new Account by copying all the data referenced by the `StoredAccountMeta`.
     pub fn clone_account(&self) -> AccountSharedData {
-        let has_application_fees = self.account_meta.application_fees > 0;
-        let account_flags = get_account_flags(self.account_meta.executable, has_application_fees);
         AccountSharedData::from(Account {
             lamports: self.account_meta.lamports,
             owner: self.account_meta.owner,
-            account_flags,
-            rent_epoch_or_application_fees: if has_application_fees {self.account_meta.application_fees} else {self.account_meta.rent_epoch},
+            account_flags: self.account_meta.account_flags,
+            rent_epoch_or_application_fees: self.account_meta.rent_epoch_or_application_fees,
             data: self.data.to_vec(),
         })
     }
@@ -246,9 +256,9 @@ impl<'a> StoredAccountMeta<'a> {
     fn ref_executable_byte(&self) -> &u8 {
         // Use extra references to avoid value silently clamped to 1 (=true) and 0 (=false)
         // Yes, this really happens; see test_new_from_file_crafted_executable
-        let executable_bool: &bool = &self.account_meta.executable;
+        let executable_bool = &self.account_meta.account_flags;
         // UNSAFE: Force to interpret mmap-backed bool as u8 to really read the actual memory content
-        let executable_byte: &u8 = unsafe { &*(executable_bool as *const bool as *const u8) };
+        let executable_byte: &u8 = unsafe { &*(executable_bool as *const u8) };
         executable_byte
     }
 }
@@ -656,9 +666,8 @@ impl AppendVec {
                 .map(|account| AccountMeta {
                     lamports: account.lamports(),
                     owner: *account.owner(),
-                    rent_epoch: account.rent_epoch(),
-                    executable: account.executable(),
-                    application_fees: account.application_fees(),
+                    account_flags: get_account_flags(account.executable(), account.has_application_fees()),
+                    rent_epoch_or_application_fees: if account.has_application_fees() {account.application_fees()} else {account.rent_epoch()}
                 })
                 .unwrap_or_default();
 
@@ -934,9 +943,8 @@ pub mod tests {
         let def1 = AccountMeta {
             lamports: 1,
             owner: Pubkey::new_unique(),
-            executable: true,
-            rent_epoch: 3,
-            application_fees: 0,
+            account_flags:1,
+            rent_epoch_or_application_fees: 3,
         };
 
         let def2_account = Account {

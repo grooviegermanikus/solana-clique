@@ -132,12 +132,12 @@ impl AccountsUpdateNotifierImpl {
             pubkey: stored_account_meta.pubkey().as_ref(),
             lamports: stored_account_meta.account_meta.lamports,
             owner: stored_account_meta.account_meta.owner.as_ref(),
-            executable: stored_account_meta.account_meta.executable,
-            rent_epoch: stored_account_meta.account_meta.rent_epoch,
+            executable: stored_account_meta.account_meta.is_executable(),
+            rent_epoch: stored_account_meta.account_meta.rent_epoch(),
             data: stored_account_meta.data,
             write_version: stored_account_meta.meta.write_version_obsolete,
             txn_signature: None,
-            application_fees: stored_account_meta.account_meta.application_fees,
+            application_fees: stored_account_meta.account_meta.application_fees(),
         })
     }
 

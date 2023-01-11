@@ -850,7 +850,7 @@ impl<'a> ReadableAccount for LoadedAccount<'a> {
     fn executable(&self) -> bool {
         match self {
             LoadedAccount::Stored(stored_account_meta) => {
-                stored_account_meta.account_meta.executable
+                stored_account_meta.account_meta.is_executable()
             }
             LoadedAccount::Cached(cached_account) => cached_account.account.executable(),
         }
@@ -858,7 +858,7 @@ impl<'a> ReadableAccount for LoadedAccount<'a> {
     fn rent_epoch(&self) -> Epoch {
         match self {
             LoadedAccount::Stored(stored_account_meta) => {
-                stored_account_meta.account_meta.rent_epoch
+                stored_account_meta.account_meta.rent_epoch()
             }
             LoadedAccount::Cached(cached_account) => cached_account.account.rent_epoch(),
         }
@@ -866,7 +866,7 @@ impl<'a> ReadableAccount for LoadedAccount<'a> {
     fn application_fees(&self) -> u64 {
         match self {
             LoadedAccount::Stored(stored_account_meta) => {
-                stored_account_meta.account_meta.application_fees
+                stored_account_meta.account_meta.application_fees()
             },
             LoadedAccount::Cached(cached_account) => cached_account.account.application_fees(),
         }
@@ -874,7 +874,7 @@ impl<'a> ReadableAccount for LoadedAccount<'a> {
     fn has_application_fees(&self) -> bool {
         match self{
             LoadedAccount::Stored(stored_account_meta) => {
-                stored_account_meta.account_meta.application_fees > 0
+                stored_account_meta.account_meta.has_application_fees()
             },
             LoadedAccount::Cached(cached_account) => cached_account.account.has_application_fees(),
         }
@@ -2157,16 +2157,16 @@ impl<'a> ReadableAccount for StoredAccountMeta<'a> {
         &self.account_meta.owner
     }
     fn executable(&self) -> bool {
-        self.account_meta.executable
+        self.account_meta.is_executable()
     }
     fn rent_epoch(&self) -> Epoch {
-        self.account_meta.rent_epoch
+        self.account_meta.rent_epoch()
     }
     fn application_fees(&self) -> u64 {
-        self.account_meta.application_fees
+        self.account_meta.application_fees()
     }
     fn has_application_fees(&self) -> bool {
-        self.account_meta.application_fees > 0
+        self.account_meta.has_application_fees()
     }
 }
 
@@ -9628,9 +9628,8 @@ pub mod tests {
         let account_meta = AccountMeta {
             lamports: 1,
             owner: Pubkey::new(&[2; 32]),
-            executable: false,
-            rent_epoch: 0,
-            application_fees:0,
+            account_flags : 0,
+            rent_epoch_or_application_fees: 0,
         };
         let offset = 3;
         let hash = Hash::new(&[2; 32]);
@@ -9726,9 +9725,8 @@ pub mod tests {
         let account_meta = AccountMeta {
             lamports,
             owner,
-            executable,
-            rent_epoch,
-            application_fees:0,
+            account_flags: update_is_executable(0, executable),
+            rent_epoch_or_application_fees: rent_epoch,
         };
         let offset = 99;
         let stored_size = 101;
@@ -12353,15 +12351,14 @@ pub mod tests {
         let account_meta = AccountMeta {
             lamports,
             owner,
-            executable,
-            rent_epoch,
-            application_fees: 0,
+            account_flags: update_is_executable(0, executable),
+            rent_epoch_or_application_fees: rent_epoch,
         };
         let data = Vec::new();
         let account = Account {
             lamports,
             owner,
-            account_flags: update_is_executable(account_flags, executable),
+            account_flags: update_is_executable(0 , executable),
             rent_epoch_or_application_fees: rent_epoch,
             data: data.clone(),
         };

@@ -253,7 +253,7 @@ fn run_transactions_dos(
         process_command(&config).expect("deploy didn't pass");
     } else {
         info!("Found program account. Skipping deploy..");
-        assert!(program_account.unwrap().executable);
+        assert!(program_account.unwrap().is_executable());
     }
 
     let mut tx_sent_count = 0;

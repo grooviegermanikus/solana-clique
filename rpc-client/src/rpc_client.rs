@@ -4301,7 +4301,7 @@ mod tests {
             lamports: 1_000_000,
             data: vec![],
             owner: program_id,
-            account_flags: false,
+            account_flags: 0,
             rent_epoch_or_application_fees: 0,
         };
         let keyed_account = RpcKeyedAccount {

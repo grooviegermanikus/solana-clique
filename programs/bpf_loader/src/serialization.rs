@@ -930,7 +930,6 @@ mod tests {
                     owner,
                     executable,
                     rent_epoch: if has_application_fees {0} else {rent_epoch_or_application_fees},
-                    application_fees: if has_application_fees {rent_epoch_or_application_fees} else {0},
                 });
             } else {
                 // duplicate account, clone the original

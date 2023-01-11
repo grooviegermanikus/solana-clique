@@ -3491,6 +3491,7 @@ pub mod tests {
                     inline_spl_token::id(),
                     false,
                     0,
+                    0,
                 ),
                 secondary_indexes,
                 true,
