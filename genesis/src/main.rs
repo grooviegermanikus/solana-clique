@@ -716,7 +716,7 @@ mod tests {
 
                 assert_eq!(
                     b64_account.executable,
-                    genesis_config.accounts[&pubkey].executable
+                    genesis_config.accounts[&pubkey].is_executable()
                 );
 
                 assert_eq!(
@@ -800,7 +800,7 @@ mod tests {
 
             assert_eq!(
                 b64_account.executable,
-                genesis_config.accounts[&pubkey].executable,
+                genesis_config.accounts[&pubkey].is_executable(),
             );
 
             assert_eq!(
@@ -884,7 +884,7 @@ mod tests {
 
             assert_eq!(
                 b64_account.executable,
-                genesis_config.accounts[&pubkey].executable,
+                genesis_config.accounts[&pubkey].is_executable(),
             );
 
             assert_eq!(
@@ -909,7 +909,7 @@ mod tests {
 
             assert_eq!(
                 genesis_accounts2[&keypair_str].executable,
-                genesis_config.accounts[&pubkey].executable,
+                genesis_config.accounts[&pubkey].is_executable(),
             );
 
             assert_eq!(

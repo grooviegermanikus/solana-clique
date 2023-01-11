@@ -1,5 +1,7 @@
 #![allow(clippy::integer_arithmetic)]
 
+use solana_sdk::account::get_account_flags;
+
 use {
     byteorder::{ByteOrder, LittleEndian},
     solana_rbpf::{
@@ -234,8 +236,8 @@ fn serialize_parameters_unaligned(
                 s.write_account(&account)
                     .map_err(|_| InstructionError::InvalidArgument)?;
                 s.write_all(account.get_owner().as_ref());
-                s.write::<u8>(account.is_executable() as u8);
-                s.write::<u64>((account.get_rent_epoch()).to_le());
+                s.write::<u8>(get_account_flags(account.is_executable(), account.has_application_fees()));
+                s.write::<u64>((account.get_rent_epoch_or_application_fees()).to_le());
             }
         };
     }
@@ -343,7 +345,7 @@ fn serialize_parameters_aligned(
                 s.write::<u8>(NON_DUP_MARKER);
                 s.write::<u8>(borrowed_account.is_signer() as u8);
                 s.write::<u8>(borrowed_account.is_writable() as u8);
-                s.write::<u8>(borrowed_account.is_executable() as u8);
+                s.write::<u8>(get_account_flags(borrowed_account.is_executable(), borrowed_account.has_application_fees()) as u8);
                 s.write_all(&[0u8, 0, 0, 0]);
                 s.write_all(borrowed_account.get_key().as_ref());
                 s.write_all(borrowed_account.get_owner().as_ref());
@@ -351,7 +353,7 @@ fn serialize_parameters_aligned(
                 s.write::<u64>((borrowed_account.get_data().len() as u64).to_le());
                 s.write_account(&borrowed_account)
                     .map_err(|_| InstructionError::InvalidArgument)?;
-                s.write::<u64>((borrowed_account.get_rent_epoch()).to_le());
+                s.write::<u64>((borrowed_account.get_rent_epoch_or_application_fees()).to_le());
             }
             SerializeAccount::Duplicate(position) => {
                 s.write::<u8>(position as u8);
@@ -445,7 +447,7 @@ pub fn deserialize_parameters_aligned(
 
 #[cfg(test)]
 mod tests {
-    use solana_sdk::account::{is_executable, has_application_fees};
+    use solana_sdk::account::{has_application_fees, is_executable};
 
     use {
         super::*,
@@ -769,7 +771,6 @@ mod tests {
             assert_eq!(account.owner(), account_info.owner);
             assert_eq!(account.executable(), account_info.executable);
             assert_eq!(account.rent_epoch(), account_info.rent_epoch);
-            assert_eq!(account.application_fees(), account_info.application_fees);
 
             assert_eq!(
                 (*account_info.lamports.borrow() as *const u64).align_offset(BPF_ALIGN_OF_U128),
@@ -842,7 +843,6 @@ mod tests {
             assert_eq!(account.owner(), account_info.owner);
             assert_eq!(account.executable(), account_info.executable);
             assert_eq!(account.rent_epoch(), account_info.rent_epoch);
-            assert_eq!(account.application_fees(), account_info.application_fees);
         }
 
         deserialize_parameters(
@@ -913,7 +913,7 @@ mod tests {
                 let account_flags = *(input.add(offset) as *const u8);
 
                 #[allow(clippy::cast_ptr_alignment)]
-                let executable= is_executable(account_flags);
+                let executable = is_executable(account_flags);
                 let has_application_fees = has_application_fees(account_flags);
                 offset += size_of::<u8>();
 
@@ -929,7 +929,11 @@ mod tests {
                     data,
                     owner,
                     executable,
-                    rent_epoch: if has_application_fees {0} else {rent_epoch_or_application_fees},
+                    rent_epoch: if has_application_fees {
+                        0
+                    } else {
+                        rent_epoch_or_application_fees
+                    },
                 });
             } else {
                 // duplicate account, clone the original

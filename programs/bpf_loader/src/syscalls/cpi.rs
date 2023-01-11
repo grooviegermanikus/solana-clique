@@ -1781,7 +1781,6 @@ mod tests {
                 owner: unsafe { (owner_addr as *const Pubkey).as_ref() }.unwrap(),
                 executable: self.executable,
                 rent_epoch: self.rent_epoch,
-                application_fees: 0,
             };
 
             unsafe {

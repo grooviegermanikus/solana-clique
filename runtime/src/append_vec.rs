@@ -4,7 +4,9 @@
 //!
 //! <https://docs.solana.com/implemented-proposals/persistent-account-storage>
 
-use solana_sdk::account::{get_account_flags, is_executable, has_application_fees, get_rent_epoch, get_application_fees};
+use solana_sdk::account::{
+    get_account_flags, get_application_fees, get_rent_epoch, has_application_fees, is_executable,
+};
 
 use {
     crate::storable_accounts::StorableAccounts,
@@ -196,7 +198,11 @@ impl<'a, T: ReadableAccount> From<&'a T> for AccountMeta {
             lamports: account.lamports(),
             owner: *account.owner(),
             account_flags: get_account_flags(account.executable(), account.has_application_fees()),
-            rent_epoch_or_application_fees: if account.has_application_fees() {account.application_fees()} else {account.rent_epoch()},
+            rent_epoch_or_application_fees: if account.has_application_fees() {
+                account.application_fees()
+            } else {
+                account.rent_epoch()
+            },
         }
     }
 }
@@ -666,8 +672,15 @@ impl AppendVec {
                 .map(|account| AccountMeta {
                     lamports: account.lamports(),
                     owner: *account.owner(),
-                    account_flags: get_account_flags(account.executable(), account.has_application_fees()),
-                    rent_epoch_or_application_fees: if account.has_application_fees() {account.application_fees()} else {account.rent_epoch()}
+                    account_flags: get_account_flags(
+                        account.executable(),
+                        account.has_application_fees(),
+                    ),
+                    rent_epoch_or_application_fees: if account.has_application_fees() {
+                        account.application_fees()
+                    } else {
+                        account.rent_epoch()
+                    },
                 })
                 .unwrap_or_default();
 
@@ -756,7 +769,7 @@ pub mod tests {
         }
 
         fn get_executable_byte(&self) -> u8 {
-            let executable_bool: bool = self.account_meta.executable;
+            let executable_bool: bool = self.account_meta.is_executable();
             // UNSAFE: Force to interpret mmap-backed bool as u8 to really read the actual memory content
             let executable_byte: u8 = unsafe { std::mem::transmute::<bool, u8>(executable_bool) };
             executable_byte
@@ -766,7 +779,7 @@ pub mod tests {
         fn set_executable_as_byte(&self, new_executable_byte: u8) {
             // UNSAFE: Force to interpret mmap-backed &bool as &u8 to write some crafted value;
             unsafe {
-                *(&self.account_meta.executable as *const bool as *mut u8) = new_executable_byte;
+                *(&self.account_meta.account_flags as *const u8 as *mut u8) = new_executable_byte;
             }
         }
     }
@@ -943,15 +956,15 @@ pub mod tests {
         let def1 = AccountMeta {
             lamports: 1,
             owner: Pubkey::new_unique(),
-            account_flags:1,
+            account_flags: 1,
             rent_epoch_or_application_fees: 3,
         };
 
         let def2_account = Account {
             lamports: def1.lamports,
             owner: def1.owner,
-            account_flags: update_is_executable(0, def1.application_fees),
-            rent_epoch_or_application_fees: def1.rent_epoch,
+            account_flags: update_is_executable(0, def1.has_application_fees()),
+            rent_epoch_or_application_fees: def1.rent_epoch_or_application_fees,
             data: Vec::new(),
         };
         let def2 = AccountMeta::from(&def2_account);
@@ -1260,7 +1273,7 @@ pub mod tests {
 
         // we can observe crafted value by ref
         {
-            let executable_bool: &bool = &account.account_meta.executable;
+            let executable_bool: &bool = &account.account_meta.is_executable();
             // Depending on use, *executable_bool can be truthy or falsy due to direct memory manipulation
             // assert_eq! thinks *executable_bool is equal to false but the if condition thinks it's not, contradictorily.
             assert!(!*executable_bool);
@@ -1276,7 +1289,7 @@ pub mod tests {
 
         // we can NOT observe crafted value by value
         {
-            let executable_bool: bool = account.account_meta.executable;
+            let executable_bool: bool = account.account_meta.is_executable();
             assert!(!executable_bool);
             assert_eq!(account.get_executable_byte(), 0); // Wow, not crafted_executable!
         }

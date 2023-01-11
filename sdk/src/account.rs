@@ -40,12 +40,12 @@ pub struct Account {
     pub rent_epoch_or_application_fees: u64,
 }
 
-const EXECUTABLE_BIT : u8 = 0x1;
-const APPLICATION_FEE_PRESENCE_BIT : u8 = 0x1 << 7;
+const EXECUTABLE_BIT: u8 = 0x1;
+const APPLICATION_FEE_PRESENCE_BIT: u8 = 0x1 << 7;
 
 pub fn get_account_flags(executable: bool, has_application_fees: bool) -> u8 {
-    let mut account_flags : u8 = 0;
-    if  executable {
+    let mut account_flags: u8 = 0;
+    if executable {
         account_flags |= EXECUTABLE_BIT;
     }
     if has_application_fees {
@@ -87,8 +87,15 @@ mod account_serialize {
             lamports: account.lamports(),
             data: account.data(),
             owner: *account.owner(),
-            account_flags : super::get_account_flags(account.executable(), account.has_application_fees()),
-            rent_epoch_or_application_fees : if account.has_application_fees() {account.application_fees()} else {account.rent_epoch()},
+            account_flags: super::get_account_flags(
+                account.executable(),
+                account.has_application_fees(),
+            ),
+            rent_epoch_or_application_fees: if account.has_application_fees() {
+                account.application_fees()
+            } else {
+                account.rent_epoch()
+            },
         };
         temp.serialize(serializer)
     }
@@ -133,28 +140,44 @@ pub struct AccountSharedData {
 }
 
 // get bit from account flags to test if account is executable
-pub fn is_executable(account_flags : u8) -> bool {
+pub fn is_executable(account_flags: u8) -> bool {
     account_flags & EXECUTABLE_BIT > 0
 }
 
-pub fn has_application_fees(account_flags : u8) -> bool {
+pub fn has_application_fees(account_flags: u8) -> bool {
     account_flags & APPLICATION_FEE_PRESENCE_BIT > 0
 }
 
 pub fn update_is_executable(account_flags: u8, executable: bool) -> u8 {
-    if executable { account_flags | EXECUTABLE_BIT } else { account_flags & (!EXECUTABLE_BIT) }
+    if executable {
+        account_flags | EXECUTABLE_BIT
+    } else {
+        account_flags & (!EXECUTABLE_BIT)
+    }
 }
 
 pub fn update_has_application_fees(account_flags: u8, has_application_fees: bool) -> u8 {
-    if has_application_fees { account_flags | APPLICATION_FEE_PRESENCE_BIT } else { account_flags & (!APPLICATION_FEE_PRESENCE_BIT) }
+    if has_application_fees {
+        account_flags | APPLICATION_FEE_PRESENCE_BIT
+    } else {
+        account_flags & (!APPLICATION_FEE_PRESENCE_BIT)
+    }
 }
 
 pub fn get_rent_epoch(account_flags: u8, rent_epoch_or_application_fees: u64) -> Epoch {
-    if !has_application_fees(account_flags) {rent_epoch_or_application_fees} else {0}
+    if !has_application_fees(account_flags) {
+        rent_epoch_or_application_fees
+    } else {
+        0
+    }
 }
 
 pub fn get_application_fees(account_flags: u8, rent_epoch_or_application_fees: u64) -> Epoch {
-    if has_application_fees(account_flags) {rent_epoch_or_application_fees} else {0}
+    if has_application_fees(account_flags) {
+        rent_epoch_or_application_fees
+    } else {
+        0
+    }
 }
 
 /// Compares two ReadableAccounts
@@ -231,7 +254,7 @@ pub trait WritableAccount: ReadableAccount {
         owner: Pubkey,
         executable: bool,
         rent_epoch: Epoch,
-        application_fees : u64,
+        application_fees: u64,
     ) -> Self;
 }
 
@@ -296,10 +319,14 @@ impl WritableAccount for Account {
         self.owner.as_mut().copy_from_slice(source);
     }
     fn set_executable(&mut self, executable: bool) {
-        self.account_flags = if executable { self.account_flags | EXECUTABLE_BIT } else { self.account_flags & (!0x1) };
+        self.account_flags = if executable {
+            self.account_flags | EXECUTABLE_BIT
+        } else {
+            self.account_flags & (!0x1)
+        };
     }
     fn set_rent_epoch(&mut self, epoch: Epoch) {
-        if has_application_fees(self.account_flags){
+        if has_application_fees(self.account_flags) {
             warn!("Account: cannot set rent epoch for account which has application fees");
             return;
         }
@@ -327,7 +354,7 @@ impl WritableAccount for Account {
         owner: Pubkey,
         executable: bool,
         rent_epoch: Epoch,
-        application_fees : u64,
+        application_fees: u64,
     ) -> Self {
         let has_application_fees = application_fees > 0;
         if application_fees > 0 && rent_epoch > 0 {
@@ -338,7 +365,11 @@ impl WritableAccount for Account {
             data,
             owner,
             account_flags: get_account_flags(executable, has_application_fees),
-            rent_epoch_or_application_fees : if has_application_fees {application_fees} else {rent_epoch},
+            rent_epoch_or_application_fees: if has_application_fees {
+                application_fees
+            } else {
+                rent_epoch
+            },
         }
     }
 }
@@ -363,8 +394,10 @@ impl WritableAccount for AccountSharedData {
         self.account_flags = update_is_executable(self.account_flags, executable);
     }
     fn set_rent_epoch(&mut self, epoch: Epoch) {
-        if has_application_fees(self.account_flags){
-            warn!("AccountSharedData: cannot set rent epoch for account which has application fees");
+        if has_application_fees(self.account_flags) {
+            warn!(
+                "AccountSharedData: cannot set rent epoch for account which has application fees"
+            );
             return;
         }
         self.rent_epoch_or_application_fees = epoch;
@@ -402,7 +435,11 @@ impl WritableAccount for AccountSharedData {
             data: Arc::new(data),
             owner,
             account_flags: get_account_flags(executable, has_app_fees),
-            rent_epoch_or_application_fees : if has_app_fees {application_fees} else {rent_epoch},
+            rent_epoch_or_application_fees: if has_app_fees {
+                application_fees
+            } else {
+                rent_epoch
+            },
         }
     }
 }
@@ -463,7 +500,11 @@ impl ReadableAccount for Ref<'_, AccountSharedData> {
             data: Arc::clone(&self.data),
             owner: *self.owner(),
             account_flags: get_account_flags(self.executable(), has_app_fees),
-            rent_epoch_or_application_fees: if has_app_fees {self.application_fees()} else {self.rent_epoch()},
+            rent_epoch_or_application_fees: if has_app_fees {
+                self.application_fees()
+            } else {
+                self.rent_epoch()
+            },
         }
     }
     fn application_fees(&self) -> u64 {
@@ -846,7 +887,7 @@ impl solana_program::account_info::Account for Account {
             &self.owner,
             is_executable(self.account_flags),
             get_rent_epoch(self.account_flags, self.rent_epoch_or_application_fees),
-            get_application_fees(self.account_flags, self.rent_epoch_or_application_fees)
+            get_application_fees(self.account_flags, self.rent_epoch_or_application_fees),
         )
     }
 }
@@ -1159,15 +1200,30 @@ pub mod tests {
                     }
                 } else if field_index == 3 {
                     if pass == 0 {
-                        account1.account_flags = update_is_executable(account1.account_flags, !is_executable(account1.account_flags));
+                        account1.account_flags = update_is_executable(
+                            account1.account_flags,
+                            !is_executable(account1.account_flags),
+                        );
                     } else if pass == 1 {
-                        account1.account_flags = update_is_executable(account1.account_flags, !is_executable(account1.account_flags));
+                        account1.account_flags = update_is_executable(
+                            account1.account_flags,
+                            !is_executable(account1.account_flags),
+                        );
                         account2.set_executable(!is_executable(account2.account_flags));
                     } else if pass == 2 {
-                        account1.account_flags = update_is_executable(account1.account_flags, !is_executable(account1.account_flags));
+                        account1.account_flags = update_is_executable(
+                            account1.account_flags,
+                            !is_executable(account1.account_flags),
+                        );
                     } else if pass == 3 {
-                        account_expected.account_flags = update_is_executable(account_expected.account_flags, !is_executable(account_expected.account_flags));
-                        account2.account_flags = update_is_executable(account2.account_flags, !is_executable(account2.account_flags));
+                        account_expected.account_flags = update_is_executable(
+                            account_expected.account_flags,
+                            !is_executable(account_expected.account_flags),
+                        );
+                        account2.account_flags = update_is_executable(
+                            account2.account_flags,
+                            !is_executable(account2.account_flags),
+                        );
                     }
                 } else if field_index == 4 {
                     if pass == 0 {

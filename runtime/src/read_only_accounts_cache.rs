@@ -272,7 +272,7 @@ mod tests {
             } else {
                 let mut data = vec![0u8; DATA_SIZE];
                 rng.fill(&mut data[..]);
-                let executable : bool = rng.gen();
+                let executable: bool = rng.gen();
                 let has_application_fees = rng.gen();
                 let account = AccountSharedData::from(Account {
                     lamports: rng.gen(),

@@ -41,7 +41,7 @@ fn program_account(program_data: &[u8]) -> AccountSharedData {
         lamports: Rent::default().minimum_balance(program_data.len()).min(1),
         data: program_data.to_vec(),
         owner: solana_sdk::bpf_loader::id(),
-        account_flags : account_flags,
+        account_flags: account_flags,
         rent_epoch_or_application_fees: 0,
     })
 }

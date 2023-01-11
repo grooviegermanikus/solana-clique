@@ -891,11 +891,17 @@ impl<'a> BorrowedAccount<'a> {
         Ok(())
     }
 
-    /// Returns the rent epoch of this account (transaction wide)
+    /// Returns whether this account is executable (transaction wide)
+    #[inline]
+    pub fn has_application_fees(&self) -> bool {
+        self.account.has_application_fees()
+    }
+
+    /// Returns the rent epoch of this account (transaction wide) or application fees
     #[cfg(not(target_os = "solana"))]
     #[inline]
-    pub fn get_rent_epoch(&self) -> u64 {
-        self.account.rent_epoch()
+    pub fn get_rent_epoch_or_application_fees(&self) -> u64 {
+        if self.has_application_fees() {self.account.application_fees()} else {self.account.rent_epoch()}
     }
 
     /// Returns whether this account is a signer (instruction wide)

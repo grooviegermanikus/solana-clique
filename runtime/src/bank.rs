@@ -8126,6 +8126,7 @@ pub mod test_utils {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use solana_sdk::account::update_is_executable;
     #[allow(deprecated)]
     use solana_sdk::sysvar::fees::Fees;
     use {
@@ -15510,7 +15511,7 @@ pub(crate) mod tests {
         fn new_executable_account(owner: Pubkey) -> AccountSharedData {
             AccountSharedData::from(Account {
                 owner,
-                executable: true,
+                account_flags: update_is_executable(0, true),
                 ..Account::default()
             })
         }

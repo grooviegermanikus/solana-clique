@@ -867,15 +867,15 @@ impl<'a> ReadableAccount for LoadedAccount<'a> {
         match self {
             LoadedAccount::Stored(stored_account_meta) => {
                 stored_account_meta.account_meta.application_fees()
-            },
+            }
             LoadedAccount::Cached(cached_account) => cached_account.account.application_fees(),
         }
     }
     fn has_application_fees(&self) -> bool {
-        match self{
+        match self {
             LoadedAccount::Stored(stored_account_meta) => {
                 stored_account_meta.account_meta.has_application_fees()
-            },
+            }
             LoadedAccount::Cached(cached_account) => cached_account.account.has_application_fees(),
         }
     }
@@ -9628,7 +9628,7 @@ pub mod tests {
         let account_meta = AccountMeta {
             lamports: 1,
             owner: Pubkey::new(&[2; 32]),
-            account_flags : 0,
+            account_flags: 0,
             rent_epoch_or_application_fees: 0,
         };
         let offset = 3;
@@ -12358,7 +12358,7 @@ pub mod tests {
         let account = Account {
             lamports,
             owner,
-            account_flags: update_is_executable(0 , executable),
+            account_flags: update_is_executable(0, executable),
             rent_epoch_or_application_fees: rent_epoch,
             data: data.clone(),
         };

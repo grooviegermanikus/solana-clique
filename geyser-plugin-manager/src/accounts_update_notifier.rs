@@ -120,7 +120,7 @@ impl AccountsUpdateNotifierImpl {
             data: account.data(),
             write_version,
             txn_signature: *txn_signature,
-            application_fees : account.application_fees(),
+            application_fees: account.application_fees(),
         })
     }
 

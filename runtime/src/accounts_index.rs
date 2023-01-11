@@ -3666,7 +3666,7 @@ pub mod tests {
             0,
             0,
             &account_key,
-            &AccountSharedData::create(0, account_data.to_vec(), Pubkey::default(), false, 0),
+            &AccountSharedData::create(0, account_data.to_vec(), Pubkey::default(), false, 0, 0),
             &secondary_indexes,
             true,
             &mut vec![],
@@ -3680,7 +3680,7 @@ pub mod tests {
             0,
             0,
             &account_key,
-            &AccountSharedData::create(0, account_data[1..].to_vec(), *token_id, false, 0),
+            &AccountSharedData::create(0, account_data[1..].to_vec(), *token_id, false, 0, 0),
             &secondary_indexes,
             true,
             &mut vec![],
@@ -3695,7 +3695,7 @@ pub mod tests {
         for _ in 0..2 {
             index.update_secondary_indexes(
                 &account_key,
-                &AccountSharedData::create(0, account_data.to_vec(), *token_id, false, 0),
+                &AccountSharedData::create(0, account_data.to_vec(), *token_id, false, 0, 0),
                 &secondary_indexes,
             );
             check_secondary_index_mapping_correct(secondary_index, &[index_key], &account_key);
@@ -3713,7 +3713,7 @@ pub mod tests {
         secondary_index.reverse_index.clear();
         index.update_secondary_indexes(
             &account_key,
-            &AccountSharedData::create(0, account_data.to_vec(), *token_id, false, 0),
+            &AccountSharedData::create(0, account_data.to_vec(), *token_id, false, 0, 0),
             &secondary_indexes,
         );
         assert!(!secondary_index.index.is_empty());
@@ -3729,7 +3729,7 @@ pub mod tests {
         secondary_index.reverse_index.clear();
         index.update_secondary_indexes(
             &account_key,
-            &AccountSharedData::create(0, account_data.to_vec(), *token_id, false, 0),
+            &AccountSharedData::create(0, account_data.to_vec(), *token_id, false, 0, 0),
             &secondary_indexes,
         );
         assert!(!secondary_index.index.is_empty());
@@ -3804,7 +3804,7 @@ pub mod tests {
             slot,
             slot,
             &account_key,
-            &AccountSharedData::create(0, account_data1.to_vec(), *token_id, false, 0),
+            &AccountSharedData::create(0, account_data1.to_vec(), *token_id, false, 0, 0),
             secondary_indexes,
             true,
             &mut vec![],
@@ -3816,7 +3816,7 @@ pub mod tests {
             slot,
             slot,
             &account_key,
-            &AccountSharedData::create(0, account_data2.to_vec(), *token_id, false, 0),
+            &AccountSharedData::create(0, account_data2.to_vec(), *token_id, false, 0, 0),
             secondary_indexes,
             true,
             &mut vec![],
@@ -3836,7 +3836,7 @@ pub mod tests {
             later_slot,
             later_slot,
             &account_key,
-            &AccountSharedData::create(0, account_data1.to_vec(), *token_id, false, 0),
+            &AccountSharedData::create(0, account_data1.to_vec(), *token_id, false, 0, 0),
             secondary_indexes,
             true,
             &mut vec![],

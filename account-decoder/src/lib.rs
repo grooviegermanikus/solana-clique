@@ -44,7 +44,7 @@ pub struct UiAccount {
     pub executable: bool,
     pub rent_epoch: Epoch,
     pub space: Option<u64>,
-    pub application_fees : u64,
+    pub application_fees: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

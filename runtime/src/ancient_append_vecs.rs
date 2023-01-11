@@ -128,9 +128,8 @@ pub mod tests {
         let account_meta = AccountMeta {
             lamports: 1,
             owner: Pubkey::new(&[2; 32]),
-            executable: false,
-            rent_epoch: 0,
-            application_fees: 0,
+            account_flags: 0,
+            rent_epoch_or_application_fees: 0,
         };
         let offset = 3;
         let hash = Hash::new(&[2; 32]);

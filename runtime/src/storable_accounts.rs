@@ -243,6 +243,8 @@ impl<'a> StorableAccounts<'a, StoredAccountMeta<'a>>
 }
 #[cfg(test)]
 pub mod tests {
+    use solana_sdk::account::get_account_flags;
+
     use {
         super::*,
         crate::{
@@ -289,9 +291,8 @@ pub mod tests {
         let account_meta = AccountMeta {
             lamports,
             owner,
-            executable,
-            rent_epoch,
-            application_fees,
+            account_flags: 0,
+            rent_epoch_or_application_fees: 0,
         };
         let data = Vec::default();
         let offset = 99;
@@ -348,9 +349,15 @@ pub mod tests {
                             AccountMeta {
                                 lamports: account.lamports(),
                                 owner: *account.owner(),
-                                executable: account.executable(),
-                                rent_epoch: account.rent_epoch(),
-                                application_fees: account.application_fees(),
+                                account_flags: get_account_flags(
+                                    account.executable(),
+                                    account.has_application_fees(),
+                                ),
+                                rent_epoch_or_application_fees: if account.has_application_fees() {
+                                    account.application_fees()
+                                } else {
+                                    account.rent_epoch()
+                                },
                             },
                         ));
                     }
