@@ -5,12 +5,9 @@ pub use solana_quic_client::nonblocking::quic_client::{
     QuicClient, QuicClientCertificate, QuicError, QuicLazyInitializedEndpoint, QuicTpuConnection,
 };
 use {
-    crate::nonblocking::tpu_connection::TpuConnection,
-    async_trait::async_trait,
-    log::*,
-    solana_sdk::transport::Result as TransportResult,
-    solana_tpu_client::tpu_connection::ClientStats,
-    std::{net::SocketAddr, sync::Arc},
+    crate::nonblocking::tpu_connection::TpuConnection, async_trait::async_trait,
+    core::sync::atomic::Ordering, log::*, solana_sdk::transport::Result as TransportResult,
+    solana_tpu_client::tpu_connection::ClientStats, std::net::SocketAddr,
 };
 
 #[async_trait]
@@ -23,7 +20,13 @@ impl TpuConnection for QuicTpuConnection {
     where
         T: AsRef<[u8]> + Send + Sync,
     {
-        let stats = ClientStats::default();
+        let mut stats = ClientStats::default();
+        stats.get_tpu_client_errors = self
+            .connection_stats
+            .get_tpu_client_errors
+            .load(core::sync::atomic::Ordering::Relaxed);
+        stats.server_errors = self.connection_stats.server_errors.clone();
+
         let len = buffers.len();
         let res = self
             .client
@@ -39,7 +42,13 @@ impl TpuConnection for QuicTpuConnection {
     where
         T: AsRef<[u8]> + Send + Sync,
     {
-        let stats = Arc::new(ClientStats::default());
+        let mut stats = ClientStats::default();
+        stats.get_tpu_client_errors = self
+            .connection_stats
+            .get_tpu_client_errors
+            .load(Ordering::Relaxed);
+        stats.server_errors = self.connection_stats.server_errors.clone();
+
         let send_buffer =
             self.client
                 .send_buffer(wire_transaction, &stats, self.connection_stats.clone());

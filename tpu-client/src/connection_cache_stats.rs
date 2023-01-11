@@ -1,6 +1,12 @@
+use std::sync::atomic::AtomicBool;
+
 use {
     crate::tpu_connection::ClientStats,
-    std::sync::atomic::{AtomicU64, Ordering},
+    std::sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+    tokio::sync::RwLock,
 };
 
 #[derive(Default)]
@@ -21,6 +27,9 @@ pub struct ConnectionCacheStats {
     // Need to track these separately per-connection
     // because we need to track the base stat value from quinn
     pub total_client_stats: ClientStats,
+
+    pub get_tpu_client_errors: AtomicBool,
+    pub server_errors: Arc<RwLock<Vec<String>>>,
 }
 
 pub const CONNECTION_STAT_SUBMISSION_INTERVAL: u64 = 2000;

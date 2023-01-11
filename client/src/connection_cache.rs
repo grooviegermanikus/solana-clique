@@ -1,3 +1,5 @@
+use std::sync::atomic::AtomicBool;
+
 pub use solana_tpu_client::tpu_connection_cache::{
     DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_ENABLE_UDP, DEFAULT_TPU_USE_QUIC,
 };
@@ -80,6 +82,24 @@ impl ConnectionCache {
     /// Create a connection cache with a specific quic client endpoint.
     pub fn new_with_endpoint(connection_pool_size: usize, client_endpoint: Endpoint) -> Self {
         Self::_new_with_endpoint(connection_pool_size, Some(client_endpoint))
+    }
+
+    pub fn new_with_endpoint_and_store_tpu_errors(
+        connection_pool_size: usize,
+        client_endpoint: Endpoint,
+    ) -> Self {
+        // The minimum pool size is 1.
+        let connection_pool_size = 1.max(connection_pool_size);
+        Self {
+            use_quic: true,
+            connection_pool_size,
+            client_endpoint: Some(client_endpoint),
+            stats: Arc::new(ConnectionCacheStats {
+                get_tpu_client_errors: AtomicBool::new(true),
+                ..Default::default()
+            }),
+            ..Self::default()
+        }
     }
 
     fn _new_with_endpoint(connection_pool_size: usize, client_endpoint: Option<Endpoint>) -> Self {

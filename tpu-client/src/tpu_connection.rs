@@ -1,3 +1,5 @@
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use {
     rayon::iter::{IntoParallelIterator, ParallelIterator},
     solana_metrics::MovingStat,
@@ -20,6 +22,9 @@ pub struct ClientStats {
     pub tx_acks: MovingStat,
     pub make_connection_ms: AtomicU64,
     pub send_timeout: AtomicU64,
+
+    pub get_tpu_client_errors: bool,
+    pub server_errors: Arc<RwLock<Vec<String>>>,
 }
 
 pub trait TpuConnection {
