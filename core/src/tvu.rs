@@ -1,6 +1,10 @@
 //! The `tvu` module implements the Transaction Validation Unit, a multi-stage transaction
 //! validation pipeline in software.
 
+use std::sync::Mutex;
+
+use crate::clique_stage::{CliqueStage, CliqueStageConfig};
+
 use {
     crate::{
         broadcast_stage::RetransmitSlotsSender,
@@ -151,7 +155,7 @@ impl Tvu {
             fetch_sockets,
             forward_sockets,
             repair_socket.clone(),
-            fetch_sender,
+            fetch_sender.clone(),
             tvu_config.shred_version,
             bank_forks.clone(),
             cluster_info.clone(),
@@ -160,6 +164,8 @@ impl Tvu {
 
         let (verified_sender, verified_receiver) = unbounded();
         let (retransmit_sender, retransmit_receiver) = unbounded();
+        let (clique_outbound_sender, clique_outbound_receiver) = unbounded();
+
         let shred_sigverify = sigverify_shreds::spawn_shred_sigverify(
             cluster_info.id(),
             bank_forks.clone(),
@@ -167,9 +173,16 @@ impl Tvu {
             fetch_receiver,
             retransmit_sender.clone(),
             verified_sender,
+            clique_outbound_sender,
             turbine_disabled,
         );
 
+        let clique_stage_config = CliqueStageConfig {
+            exit: exit.clone(),
+            identity_keypair: authorized_voter_keypairs.as_ref().read().unwrap()[0].clone(),
+        };
+        let clique_stage = CliqueStage::new(clique_stage_config, clique_outbound_receiver,
+            fetch_sender.clone());
         let retransmit_stage = RetransmitStage::new(
             bank_forks.clone(),
             leader_schedule_cache.clone(),
