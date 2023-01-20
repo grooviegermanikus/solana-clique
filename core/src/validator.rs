@@ -941,6 +941,7 @@ impl Validator {
             TvuSockets {
                 repair: node.sockets.repair,
                 retransmit: node.sockets.retransmit_sockets,
+                clique: node.sockets.clique_sockets,
                 fetch: node.sockets.tvu,
                 forwards: node.sockets.tvu_forwards,
                 ancestor_hashes_requests: node.sockets.ancestor_hashes_requests,

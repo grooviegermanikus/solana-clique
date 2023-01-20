@@ -1,14 +1,10 @@
 //! The `tvu` module implements the Transaction Validation Unit, a multi-stage transaction
 //! validation pipeline in software.
-
-use std::sync::Mutex;
-
-use crate::clique_stage::{CliqueStage, CliqueStageConfig};
-
 use {
     crate::{
         broadcast_stage::RetransmitSlotsSender,
         cache_block_meta_service::CacheBlockMetaSender,
+        clique_stage::CliqueStage,
         cluster_info_vote_listener::{
             GossipDuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver,
             VerifiedVoteReceiver, VoteTracker,
@@ -76,6 +72,7 @@ pub struct TvuSockets {
     pub fetch: Vec<UdpSocket>,
     pub repair: UdpSocket,
     pub retransmit: Vec<UdpSocket>,
+    pub clique: Vec<UdpSocket>,
     pub forwards: Vec<UdpSocket>,
     pub ancestor_hashes_requests: UdpSocket,
 }
@@ -140,6 +137,7 @@ impl Tvu {
             repair: repair_socket,
             fetch: fetch_sockets,
             retransmit: retransmit_sockets,
+            clique: clique_outbound_sockets,
             forwards: tvu_forward_sockets,
             ancestor_hashes_requests: ancestor_hashes_socket,
         } = sockets;
@@ -177,12 +175,16 @@ impl Tvu {
             turbine_disabled,
         );
 
-        let clique_stage_config = CliqueStageConfig {
-            exit: exit.clone(),
-            identity_keypair: authorized_voter_keypairs.as_ref().read().unwrap()[0].clone(),
-        };
-        let clique_stage = CliqueStage::new(clique_stage_config, clique_outbound_receiver,
-            fetch_sender.clone());
+
+        let clique_stage = CliqueStage::new(
+            bank_forks.clone(),
+            cluster_info.clone(),
+            clique_outbound_receiver,
+            Arc::new(clique_outbound_sockets),
+            exit.clone(),
+            authorized_voter_keypairs.read().unwrap()[0].clone(),
+            leader_schedule_cache.clone(),
+        );
         let retransmit_stage = RetransmitStage::new(
             bank_forks.clone(),
             leader_schedule_cache.clone(),
@@ -429,6 +431,7 @@ pub mod tests {
                 TvuSockets {
                     repair: target1.sockets.repair,
                     retransmit: target1.sockets.retransmit_sockets,
+                    clique: target1.sockets.clique_sockets,
                     fetch: target1.sockets.tvu,
                     forwards: target1.sockets.tvu_forwards,
                     ancestor_hashes_requests: target1.sockets.ancestor_hashes_requests,

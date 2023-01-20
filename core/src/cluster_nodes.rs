@@ -1,3 +1,5 @@
+use crate::clique_stage::CliqueStage;
+
 use {
     crate::{broadcast_stage::BroadcastStage, retransmit_stage::RetransmitStage},
     itertools::Itertools,
@@ -143,6 +145,137 @@ impl ClusterNodes<BroadcastStage> {
     }
 }
 
+impl ClusterNodes<CliqueStage> {
+    pub fn new(cluster_info: &ClusterInfo, clique_nodes: &Vec<Pubkey>) -> Self {
+        new_cluster_nodes(cluster_info, &clique_nodes.iter().map(|pk| (*pk, 1u64)).collect())
+    }
+
+    pub(crate) fn get_retransmit_addrs(
+        &self,
+        slot_leader: &Pubkey,
+        shred: &ShredId,
+        fanout: usize,
+    ) -> (/*root_distance:*/ usize, Vec<SocketAddr>) {
+        let RetransmitPeers {
+            root_distance,
+            neighbors,
+            children,
+            addrs,
+            frwds,
+        } = self.get_retransmit_peers(slot_leader, shred, fanout);
+        if neighbors.is_empty() {
+            let peers = children
+                .into_iter()
+                .filter_map(Node::contact_info)
+                .filter(|node| addrs.get(&node.tvu) == Some(&node.id))
+                .map(|node| node.tvu)
+                .collect();
+            return (root_distance, peers);
+        }
+        // If the node is on the critical path (i.e. the first node in each
+        // neighborhood), it should send the packet to tvu socket of its
+        // children and also tvu_forward socket of its neighbors. Otherwise it
+        // should only forward to tvu_forwards socket of its children.
+        if neighbors[0].pubkey() != self.pubkey {
+            let peers = children
+                .into_iter()
+                .filter_map(Node::contact_info)
+                .filter(|node| frwds.get(&node.tvu_forwards) == Some(&node.id))
+                .map(|node| node.tvu_forwards);
+            return (root_distance, peers.collect());
+        }
+        // First neighbor is this node itself, so skip it.
+        let peers = neighbors[1..]
+            .iter()
+            .filter_map(|node| node.contact_info())
+            .filter(|node| frwds.get(&node.tvu_forwards) == Some(&node.id))
+            .map(|node| node.tvu_forwards)
+            .chain(
+                children
+                    .into_iter()
+                    .filter_map(Node::contact_info)
+                    .filter(|node| addrs.get(&node.tvu) == Some(&node.id))
+                    .map(|node| node.tvu),
+            );
+        (root_distance, peers.collect())
+    }
+
+    pub fn get_retransmit_peers(
+        &self,
+        slot_leader: &Pubkey,
+        shred: &ShredId,
+        fanout: usize,
+    ) -> RetransmitPeers {
+        let shred_seed = shred.seed(slot_leader);
+        let mut weighted_shuffle = self.weighted_shuffle.clone();
+        // Exclude slot leader from list of nodes.
+        if slot_leader == &self.pubkey {
+            error!("retransmit from slot leader: {}", slot_leader);
+        } else if let Some(index) = self.index.get(slot_leader) {
+            weighted_shuffle.remove_index(*index);
+        };
+        let mut addrs = HashMap::<SocketAddr, Pubkey>::with_capacity(self.nodes.len());
+        let mut frwds = HashMap::<SocketAddr, Pubkey>::with_capacity(self.nodes.len());
+        let mut rng = ChaChaRng::from_seed(shred_seed);
+        let drop_redundant_turbine_path = true;
+        let nodes: Vec<_> = weighted_shuffle
+            .shuffle(&mut rng)
+            .map(|index| &self.nodes[index])
+            .inspect(|node| {
+                if let Some(node) = node.contact_info() {
+                    addrs.entry(node.tvu).or_insert(node.id);
+                    if !drop_redundant_turbine_path {
+                        frwds.entry(node.tvu_forwards).or_insert(node.id);
+                    }
+                }
+            })
+            .collect();
+        let self_index = nodes
+            .iter()
+            .position(|node| node.pubkey() == self.pubkey)
+            .unwrap();
+        if drop_redundant_turbine_path {
+            let root_distance = if self_index == 0 {
+                0
+            } else if self_index <= fanout {
+                1
+            } else if self_index <= fanout.saturating_add(1).saturating_mul(fanout) {
+                2
+            } else {
+                3 // If changed, update MAX_NUM_TURBINE_HOPS.
+            };
+            let peers = get_retransmit_peers(fanout, self_index, &nodes);
+            return RetransmitPeers {
+                root_distance,
+                neighbors: Vec::default(),
+                children: peers.collect(),
+                addrs,
+                frwds,
+            };
+        }
+        let root_distance = if self_index == 0 {
+            0
+        } else if self_index < fanout {
+            1
+        } else if self_index < fanout.saturating_add(1).saturating_mul(fanout) {
+            2
+        } else {
+            3 // If changed, update MAX_NUM_TURBINE_HOPS.
+        };
+        let (neighbors, children) = compute_retransmit_peers(fanout, self_index, &nodes);
+        // Assert that the node itself is included in the set of neighbors, at
+        // the right offset.
+        debug_assert_eq!(neighbors[self_index % fanout].pubkey(), self.pubkey);
+        RetransmitPeers {
+            root_distance,
+            neighbors,
+            children,
+            addrs,
+            frwds,
+        }
+    }
+}
+
 impl ClusterNodes<RetransmitStage> {
     pub(crate) fn get_retransmit_addrs(
         &self,
@@ -277,7 +410,7 @@ pub fn new_cluster_nodes<T: 'static>(
     stakes: &HashMap<Pubkey, u64>,
 ) -> ClusterNodes<T> {
     let self_pubkey = cluster_info.id();
-    let nodes = get_nodes(cluster_info, stakes);
+    let nodes = get_nodes::<T>(cluster_info, stakes);
     let index: HashMap<_, _> = nodes
         .iter()
         .enumerate()
@@ -300,35 +433,61 @@ pub fn new_cluster_nodes<T: 'static>(
 
 // All staked nodes + other known tvu-peers + the node itself;
 // sorted by (stake, pubkey) in descending order.
-fn get_nodes(cluster_info: &ClusterInfo, stakes: &HashMap<Pubkey, u64>) -> Vec<Node> {
+// For CliqueStage this is exclusively based on clique members.
+fn get_nodes<T: 'static>(cluster_info: &ClusterInfo, stakes: &HashMap<Pubkey, u64>) -> Vec<Node> {
     let self_pubkey = cluster_info.id();
-    // The local node itself.
-    std::iter::once({
-        let stake = stakes.get(&self_pubkey).copied().unwrap_or_default();
-        let node = NodeId::from(cluster_info.my_contact_info());
-        Node { node, stake }
-    })
-    // All known tvu-peers from gossip.
-    .chain(cluster_info.tvu_peers().into_iter().map(|node| {
-        let stake = stakes.get(&node.id).copied().unwrap_or_default();
-        let node = NodeId::from(node);
-        Node { node, stake }
-    }))
-    // All staked nodes.
-    .chain(
-        stakes
-            .iter()
-            .filter(|(_, stake)| **stake > 0)
-            .map(|(&pubkey, &stake)| Node {
-                node: NodeId::from(pubkey),
-                stake,
-            }),
-    )
-    .sorted_by_key(|node| Reverse((node.stake, node.pubkey())))
+
+    let clique_only = TypeId::of::<T>() == TypeId::of::<CliqueStage>();
+    if clique_only {
+        // all nodes in clique have the same stake weight
+        let stake = 1;
+        // The local node itself.
+        std::iter::once({
+            let node = NodeId::from(cluster_info.my_contact_info());
+            Node { node, stake }
+        })
+        // All clique nodes.
+        .chain(
+            stakes
+                .iter()
+                .map(|(&pubkey, _)| Node {
+                    node: NodeId::from(pubkey),
+                    stake,
+                }),
+        )
+        .sorted_by_key(|node| Reverse((node.stake, node.pubkey())))
     // Since sorted_by_key is stable, in case of duplicates, this
     // will keep nodes with contact-info.
     .dedup_by(|a, b| a.pubkey() == b.pubkey())
     .collect()
+    } else {
+        // The local node itself.
+        std::iter::once({
+            let stake = stakes.get(&self_pubkey).copied().unwrap_or_default();
+            let node = NodeId::from(cluster_info.my_contact_info());
+            Node { node, stake }
+        })
+        // All known tvu-peers from gossip.
+        .chain(cluster_info.tvu_peers().into_iter().map(|node| {
+            let stake = stakes.get(&node.id).copied().unwrap_or_default();
+            let node = NodeId::from(node);
+            Node { node, stake }
+        }))
+        // All staked nodes.
+        .chain(
+            stakes
+                .iter()
+                .filter(|(_, stake)| **stake > 0)
+                .map(|(&pubkey, &stake)| Node {
+                    node: NodeId::from(pubkey),
+                    stake,
+                }),
+        ).sorted_by_key(|node| Reverse((node.stake, node.pubkey())))
+        // Since sorted_by_key is stable, in case of duplicates, this
+        // will keep nodes with contact-info.
+        .dedup_by(|a, b| a.pubkey() == b.pubkey())
+        .collect()
+    }
 }
 
 // root     : [0]
