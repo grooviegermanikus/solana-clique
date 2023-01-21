@@ -386,7 +386,7 @@ impl CliqueStage {
                                 let active_clique_members: Vec<Pubkey> = clique_status.read().unwrap().iter().filter(|(_, m)| slot - m.boot_slot > CLIQUE_WARMUP_SLOTS).map(|(pk,_)|*pk).collect();
                                 let cluster_nodes = Arc::new(ClusterNodes::<CliqueStage>::new(&cluster_info, &active_clique_members));
                             
-                                Some(izip!(shreds, repeat(slot_leader), repeat(cluster_nodes)))
+                                Some(izip!(shreds, iter::repeat(slot_leader), iter::repeat(cluster_nodes)))
                             })
                             .flatten()
                             .collect();
@@ -436,9 +436,9 @@ impl CliqueStage {
                         };
                         stats.transmit_attempts += transmit_stats.0;
                         stats.transmit_errors += transmit_stats.1;
-                    }
+                    } // -- END of recv
                     stats.maybe_submit();
-                }
+                } // -- END thread
             })
             .unwrap();
 
