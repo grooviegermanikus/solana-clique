@@ -1,17 +1,7 @@
-use std::{
-    collections::{hash_map::DefaultHasher, HashMap, HashSet},
-    convert::TryFrom,
-    hash::{Hash, Hasher},
-    net::UdpSocket,
-    str::FromStr,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, RwLock,
-    },
-    task::{Context, Poll},
-    thread::{Builder, JoinHandle, self},
-    time::{Duration, Instant}, iter::repeat,
-};
+use std::{collections::{hash_map::DefaultHasher, HashMap, HashSet}, convert::TryFrom, hash::{Hash, Hasher}, net::UdpSocket, str::FromStr, sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, RwLock,
+}, task::{Context, Poll}, thread::{Builder, JoinHandle, self}, time::{Duration, Instant}, iter::repeat, iter};
 
 use crossbeam_channel::{Receiver, Sender};
 use futures::task::noop_waker;
@@ -181,7 +171,7 @@ impl CliqueStage {
 
                 // Build an identify network behaviour
                 let identify = identify::Behaviour::new(identify::Config::new(
-                    "/solana/1.15.0".into(),
+                    String::from("/solana/1.15.0"),
                     local_key.public(),
                 ));
 
@@ -345,16 +335,23 @@ impl CliqueStage {
         let outbound_thread_hdl = Builder::new()
             .name("solCliqueOutboundReceiver".to_string())
             .spawn(move || {
-                while !exit.load(Ordering::Relaxed) {                
-                    if let Ok(mut shreds) = clique_outbound_receiver.recv_timeout(RECV_TIMEOUT) {
-                        shreds.extend(clique_outbound_receiver.try_iter().flatten());
+                loop {
+                    if exit.load(Ordering::Relaxed) {
+                        return;
+                    }
+
+                    if let Ok(shreds) = clique_outbound_receiver.recv_timeout(RECV_TIMEOUT)
+                        .map(|s| [s, clique_outbound_receiver.try_iter().flatten().collect_vec()].concat() ) {
 
                         stats.shreds_inbound += shreds.len();
 
-                        let (working_bank, _root_bank) = {
+                        let working_bank;
+                        let root_bank;
+                        {
                             let bank_forks = bank_forks.read().unwrap();
-                            (bank_forks.working_bank(), bank_forks.root_bank())
-                        };
+                            working_bank = bank_forks.working_bank();
+                            root_bank = bank_forks.root_bank();
+                        }
 
                         maybe_reset_shreds_received_cache(
                             &mut shreds_received,
@@ -382,7 +379,7 @@ impl CliqueStage {
                                 // and if the leader is unknown they should fail signature check.
                                 // So here we should expect to know the slot leader and otherwise
                                 // skip the shred.
-                                let slot_leader=Arc::new(leader_schedule_cache.slot_leader_at(slot, Some(&working_bank))?);
+                                let slot_leader = Arc::new(leader_schedule_cache.slot_leader_at(slot, Some(&working_bank))?);
                                 let active_clique_members: Vec<Pubkey> = clique_status.read().unwrap().iter().filter(|(_, m)| slot - m.boot_slot > CLIQUE_WARMUP_SLOTS).map(|(pk,_)|*pk).collect();
                                 let cluster_nodes = Arc::new(ClusterNodes::<CliqueStage>::new(&cluster_info, &active_clique_members));
                             
