@@ -1,8 +1,8 @@
 use std::{
-    collections::{hash_map::DefaultHasher, HashMap, HashSet},
+    collections::{hash_map::DefaultHasher, HashMap},
     convert::TryFrom,
     hash::{Hash, Hasher},
-    net::UdpSocket,
+    net::{UdpSocket, SocketAddr},
     str::FromStr,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -13,7 +13,7 @@ use std::{
     time::{Duration, Instant}, iter::repeat,
 };
 
-use crossbeam_channel::{Receiver, Sender};
+use crossbeam_channel::Receiver;
 use futures::task::noop_waker;
 use futures_lite::stream::StreamExt;
 use itertools::{Itertools, izip};
@@ -26,13 +26,13 @@ use lru::LruCache;
 use rayon::{ThreadPoolBuilder, prelude::{IntoParallelIterator, ParallelIterator}};
 use solana_gossip::{cluster_info::ClusterInfo, legacy_contact_info::LegacyContactInfo};
 use solana_ledger::{shred::{ShredId, layout::get_shred_id}, leader_schedule_cache::LeaderScheduleCache};
-use solana_perf::packet::{Meta, Packet, PacketBatch, PacketFlags, PACKET_DATA_SIZE};
+use solana_measure::measure::Measure;
 use solana_rayon_threadlimit::get_thread_count;
 use solana_runtime::bank_forks::BankForks;
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer::{socket::SocketAddrSpace, sendmmsg::{SendPktsError, multi_target_send}};
 
-use crate::{cluster_nodes::{ClusterNodesCache, new_cluster_nodes, ClusterNodes}, packet_hasher::PacketHasher, retransmit_stage::{maybe_reset_shreds_received_cache, should_skip_retransmit}};
+use crate::{cluster_nodes::ClusterNodes, packet_hasher::PacketHasher, retransmit_stage::{maybe_reset_shreds_received_cache, should_skip_retransmit}};
 
 
 const RECV_TIMEOUT: Duration = Duration::from_secs(1);
@@ -42,7 +42,10 @@ const DEFAULT_LRU_SIZE: usize = 10_000;
 const PAR_ITER_MIN_NUM_SHREDS: usize = 2;
 const METRICS_SUBMIT_CADENCE: Duration = Duration::from_secs(2);
 const GOSSIP_HEARTBEAT_CADENCE: Duration = Duration::from_secs(10);
-const CLIQUE_WARMUP_SLOTS: u64 = 10;
+ // allow for at least a second heartbeat message to arrive
+const CLIQUE_WARMUP_SLOTS: u64 = 30;
+ // allow for at least three heartbeat messages to be missed
+const CLIQUE_TIMEOUT_SLOTS: u64 = 70;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 enum CliqueGossipMessage {
@@ -53,16 +56,20 @@ enum CliqueGossipMessage {
 struct CliqueHeartbeatMessage {
     boot_slot: u64,
     current_slot: u64,
+    shred_inbound: SocketAddr,
 }
 
 
 struct CliqueStageStats {
     since: Instant,
-    shreds_inbound: usize,
+    batches_received: usize,
+    shreds_received: usize,
     shreds_skipped: usize,
     shreds_outbound: usize,
+    transmit_plan_ns: u64,
     transmit_attempts: usize,
     transmit_errors: usize,
+    transmit_execute_ns: u64,
 }
 
 impl CliqueStageStats {
@@ -70,11 +77,14 @@ impl CliqueStageStats {
     fn new() -> Self {
         Self {
             since: Instant::now(),
-            shreds_inbound: 0usize,
+            batches_received: 0usize,
+            shreds_received: 0usize,
             shreds_skipped: 0usize,
             shreds_outbound: 0usize,
+            transmit_plan_ns: 0,
             transmit_attempts: 0usize,
             transmit_errors: 0usize,
+            transmit_execute_ns: 0,
         }
     }
 
@@ -84,11 +94,14 @@ impl CliqueStageStats {
         }
         datapoint_info!(
             "clique_stage",
-            ("shreds_inbound", self.shreds_inbound, i64),
+            ("batches_received", self.batches_received, i64),
+            ("shreds_received", self.shreds_received, i64),
             ("shreds_skipped", self.shreds_skipped, i64),
             ("shreds_outbound", self.shreds_outbound, i64),
+            ("transmit_plan_ns", self.transmit_plan_ns, i64),
             ("transmit_attempts", self.transmit_attempts, i64),
             ("transmit_errors", self.transmit_errors, i64),
+            ("transmit_execute_ns", self.transmit_execute_ns, i64),
         );
         *self = Self::new();
     }
@@ -120,6 +133,7 @@ impl CliqueStage {
         
         let boot_slot = bank_forks.read().unwrap().highest_slot();
         let clique_status = Arc::new(RwLock::new(HashMap::new()));
+        let shred_inbound = cluster_info.my_contact_info().tvu;
         
         let gossip_bank_forks = bank_forks.clone();
         let gossip_clique_status = clique_status.clone();
@@ -157,7 +171,7 @@ impl CliqueStage {
 
                 // Set a custom gossipsub configuration
                 let gossipsub_config = gossipsub::GossipsubConfigBuilder::default()
-                    .heartbeat_interval(Duration::from_secs(10)) // This is set to aid debugging by not cluttering the log space
+                    .heartbeat_interval(GOSSIP_HEARTBEAT_CADENCE) // This is set to aid debugging by not cluttering the log space
                     .validation_mode(gossipsub::ValidationMode::Strict) // This sets the kind of message validation. The default is Strict (enforce message signing)
                     .message_id_fn(message_id_fn) 
                     .build()
@@ -181,7 +195,7 @@ impl CliqueStage {
 
                 // Build an identify network behaviour
                 let identify = identify::Behaviour::new(identify::Config::new(
-                    "/solana/1.15.0".into(),
+                    format!("/solana/{}", solana_version::version!()),
                     local_key.public(),
                 ));
 
@@ -199,6 +213,7 @@ impl CliqueStage {
                 };
 
                 // Reach out to other nodes if specified
+                // TODO: configure from validator
                 for to_dial in std::env::args().skip(1) {
                     if let Ok(addr) = Multiaddr::from_str(&to_dial) {
                         info!("dialing {}", to_dial);
@@ -207,6 +222,7 @@ impl CliqueStage {
                 }
 
                 // Listen on all interfaces
+                // TODO: configure port from validator / node
                 swarm
                     .listen_on(
                         "/ip4/0.0.0.0/tcp/0"
@@ -215,19 +231,21 @@ impl CliqueStage {
                     )
                     .expect("CliqueStage listen succeeds");
 
+                // build a minimal context to execute libp2p's futures
                 let waker = noop_waker();
                 let mut cx = Context::from_waker(&waker);
-                let mut last_hearbeat = Instant::now();
+                let mut last_heartbeat = Instant::now();
                 
                 loop {
                     if gossip_exit.load(Ordering::Relaxed) {
                         break;
                     }
 
-                    if last_hearbeat.elapsed() > GOSSIP_HEARTBEAT_CADENCE {   
+                    // broadcast heartbeat message to announce membership of the clique
+                    if last_heartbeat.elapsed() > GOSSIP_HEARTBEAT_CADENCE {   
                         let current_slot = gossip_bank_forks.read().unwrap().highest_slot();
                         let message = CliqueHeartbeatMessage {
-                            boot_slot, current_slot
+                            boot_slot, current_slot, shred_inbound
                         };
 
                         if let Err(e) = swarm
@@ -237,7 +255,7 @@ impl CliqueStage {
                         }
 
                         gossip_clique_status.write().unwrap().insert(peer_id_to_solana_pubkey(local_peer_id), message);
-                        last_hearbeat = Instant::now();    
+                        last_heartbeat = Instant::now();    
                     }
 
                     if let Poll::Ready(Some(inbound)) = swarm.poll_next(&mut cx) {
@@ -347,22 +365,21 @@ impl CliqueStage {
             .spawn(move || {
                 while !exit.load(Ordering::Relaxed) {                
                     if let Ok(mut shreds) = clique_outbound_receiver.recv_timeout(RECV_TIMEOUT) {
+                        // collect more shreds that might be available to be transmitted
                         shreds.extend(clique_outbound_receiver.try_iter().flatten());
-
-                        stats.shreds_inbound += shreds.len();
-
-                        let (working_bank, _root_bank) = {
-                            let bank_forks = bank_forks.read().unwrap();
-                            (bank_forks.working_bank(), bank_forks.root_bank())
-                        };
-
+                        stats.batches_received += 1;
+                        stats.shreds_received += shreds.len();
+                        
                         maybe_reset_shreds_received_cache(
                             &mut shreds_received,
                             &mut packet_hasher,
                             &mut hasher_reset_ts,
                         );
 
-                        // Lookup slot leader for each slot.
+                        // Skip shreds that have already been transmitted to this clique
+                        // Collect all information needed for turbine to determine where to send a shred
+                        let mut transmit_plan = Measure::start("clique_transmit_plan");
+                        let working_bank = bank_forks.read().unwrap().working_bank();
                         let shreds: Vec<_> = shreds
                             .into_iter()
                             .filter_map(|shred| {
@@ -375,6 +392,7 @@ impl CliqueStage {
                                 }
                             })
                             .into_group_map_by(|(key, _)| key.slot())
+                            // TODO: evaluate if par_iter can help here, we might send shreds for multiple slots at once
                             .into_iter()
                             .filter_map(|(slot, shreds)| {
                                 // TODO: consider using root-bank here for leader lookup!
@@ -382,21 +400,29 @@ impl CliqueStage {
                                 // and if the leader is unknown they should fail signature check.
                                 // So here we should expect to know the slot leader and otherwise
                                 // skip the shred.
-                                let slot_leader=Arc::new(leader_schedule_cache.slot_leader_at(slot, Some(&working_bank))?);
-                                let active_clique_members: Vec<Pubkey> = clique_status.read().unwrap().iter().filter(|(_, m)| slot - m.boot_slot > CLIQUE_WARMUP_SLOTS).map(|(pk,_)|*pk).collect();
+                                let slot_leader = Arc::new(leader_schedule_cache.slot_leader_at(slot, Some(&working_bank))?);
+                                let active_clique_members: Vec<_> = clique_status
+                                    .read()
+                                    .unwrap()
+                                    .iter()
+                                    .filter(|(_, m)| m.boot_slot + CLIQUE_WARMUP_SLOTS < slot && slot < m.current_slot + CLIQUE_TIMEOUT_SLOTS )
+                                    .map(|(pk,m)|(*pk, m.shred_inbound))
+                                    .collect();
                                 let cluster_nodes = Arc::new(ClusterNodes::<CliqueStage>::new(&cluster_info, &active_clique_members));
                             
                                 Some(izip!(shreds, repeat(slot_leader), repeat(cluster_nodes)))
                             })
                             .flatten()
                             .collect();
+                        transmit_plan.stop();
+                        stats.transmit_plan_ns += transmit_plan.as_ns();
                         stats.shreds_outbound += shreds.len();
 
-                        let socket_addr_space = cluster_info.socket_addr_space();
-                    
+                        // transmit shreds over UDP (in parallel if needed) while aggregating stats
+                        let mut transmit_execute = Measure::start("clique_transmit_execute");
                         let init_stats = (0,0);
                         let merge_stats = |t1: (usize, usize), t2: (usize,usize)| (t1.0 + t2.0, t1.1 + t2.1);
-
+                        let socket_addr_space = cluster_info.socket_addr_space();
                         let transmit_stats = if shreds.len() < PAR_ITER_MIN_NUM_SHREDS {
                             shreds
                                 .into_iter()
@@ -434,12 +460,14 @@ impl CliqueStage {
                                     .reduce(|| init_stats, merge_stats)
                             })
                         };
+                        transmit_execute.stop();
+                        stats.transmit_execute_ns += transmit_execute.as_ns();
                         stats.transmit_attempts += transmit_stats.0;
                         stats.transmit_errors += transmit_stats.1;
-                    }
+                    } // END - recv
                     stats.maybe_submit();
-                }
-            })
+                } // END - while
+            }) // END - spawn
             .unwrap();
 
         Self { gossip_thread_hdl, outbound_thread_hdl }
@@ -452,9 +480,7 @@ impl CliqueStage {
     }
 }
 
-
-
-
+// copied and adapted from retransmit_stage.rs
 fn retransmit_shred(
     key: &ShredId,
     shred: &[u8],
@@ -465,11 +491,11 @@ fn retransmit_shred(
 ) -> (/*root_distance:*/ usize, /*num_nodes:*/ usize, /*num_failed*/ usize) {
     let (root_distance, addrs) =
         cluster_nodes.get_retransmit_addrs(slot_leader, key, DATA_PLANE_FANOUT);
+
     let addrs: Vec<_> = addrs
         .into_iter()
         .filter(|addr| LegacyContactInfo::is_valid_address(addr, socket_addr_space))
         .collect();
-    
     
     let num_failed = match multi_target_send(socket, shred, &addrs) {
         Ok(()) => 0,
@@ -487,6 +513,7 @@ fn retransmit_shred(
     (root_distance, addrs.len(), num_failed)
 }
 
+// libp2p adds a few extra bytes in the beginning to tag peer ids
 fn peer_id_to_solana_pubkey(
     peer_id: PeerId,
 ) -> Pubkey {
@@ -495,3 +522,4 @@ fn peer_id_to_solana_pubkey(
     let pk_bytes = <&[u8; 32]>::try_from(&bytes[split_index..]).unwrap();
     Pubkey::new_from_array(*pk_bytes)
 }
+
