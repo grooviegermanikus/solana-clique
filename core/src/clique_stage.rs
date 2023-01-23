@@ -25,10 +25,9 @@ use log::info;
 use lru::LruCache;
 use rayon::{ThreadPoolBuilder, prelude::{IntoParallelIterator, ParallelIterator}};
 use solana_gossip::{cluster_info::ClusterInfo, legacy_contact_info::LegacyContactInfo};
-use solana_ledger::{shred::{ShredId, layout::get_shred_id}, leader_schedule_cache::LeaderScheduleCache};
+use solana_ledger::{shred::{ShredId, layout::get_shred_id}};
 use solana_measure::measure::Measure;
 use solana_rayon_threadlimit::get_thread_count;
-use solana_runtime::bank_forks::BankForks;
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer::{socket::SocketAddrSpace, sendmmsg::{SendPktsError, multi_target_send}};
 
@@ -120,22 +119,20 @@ pub struct CliqueStage {
 }
 
 impl CliqueStage {
-    pub fn new(
-        bank_forks: Arc<RwLock<BankForks>>,
+    pub fn new<S>(
         cluster_info: Arc<ClusterInfo>,
         clique_outbound_receiver: Receiver<Vec</*shred:*/ Vec<u8>>>,
         clique_outbound_sockets: Arc<Vec<UdpSocket>>,
         exit: Arc<AtomicBool>,
         identity_keypair: Arc<solana_sdk::signature::Keypair>,
-        leader_schedule_cache: Arc<LeaderScheduleCache>,
-    ) -> Self {
+        slot_query: S
+    ) -> Self where S: 'static + Send + Fn() -> u64 {
         let mut stats = CliqueStageStats::new();
         
-        let boot_slot = bank_forks.read().unwrap().highest_slot();
+        let boot_slot = slot_query();
         let clique_status = Arc::new(RwLock::new(HashMap::new()));
         let shred_inbound = cluster_info.my_contact_info().tvu;
         
-        let gossip_bank_forks = bank_forks.clone();
         let gossip_clique_status = clique_status.clone();
         let gossip_exit= exit.clone();
         let gossip_thread_hdl = Builder::new()
@@ -143,7 +140,7 @@ impl CliqueStage {
             .spawn(move || {
 
                 // Derive peer id from solana keypair
-                let mut copy = identity_keypair.secret().as_bytes().clone();
+                let copy = identity_keypair.secret().as_bytes().clone();
                 let secret_key = identity::ed25519::SecretKey::from_bytes(copy)
                     .expect("CliqueStage solana_keypair is ed25519 compatible");
                 let local_key = identity::Keypair::Ed25519(secret_key.into());
@@ -243,7 +240,7 @@ impl CliqueStage {
 
                     // broadcast heartbeat message to announce membership of the clique
                     if last_heartbeat.elapsed() > GOSSIP_HEARTBEAT_CADENCE {   
-                        let current_slot = gossip_bank_forks.read().unwrap().highest_slot();
+                        let current_slot = slot_query();
                         let message = CliqueHeartbeatMessage {
                             boot_slot, current_slot, shred_inbound
                         };
@@ -275,7 +272,7 @@ impl CliqueStage {
                                     } => {
                                         if let Ok(message) = bincode::deserialize::<CliqueGossipMessage>(&message.data.as_slice()) {
                                             let peer_pk = peer_id_to_solana_pubkey(propagation_source);
-                                            trace!("CliqueStage inbound gossipsub peer={} message={:?}", peer_pk.to_string(), message);
+                                            trace!("CliqueStage inbound gossipsub peer={} id={:?} message={:?}", peer_pk.to_string(), message_id, message);
 
                                             match message {
                                                 CliqueGossipMessage::Heartbeat(message) => {
@@ -379,7 +376,6 @@ impl CliqueStage {
                         // Skip shreds that have already been transmitted to this clique
                         // Collect all information needed for turbine to determine where to send a shred
                         let mut transmit_plan = Measure::start("clique_transmit_plan");
-                        let working_bank = bank_forks.read().unwrap().working_bank();
                         let shreds: Vec<_> = shreds
                             .into_iter()
                             .filter_map(|shred| {
@@ -395,12 +391,6 @@ impl CliqueStage {
                             // TODO: evaluate if par_iter can help here, we might send shreds for multiple slots at once
                             .into_iter()
                             .filter_map(|(slot, shreds)| {
-                                // TODO: consider using root-bank here for leader lookup!
-                                // Shreds' signatures should be verified before they reach here,
-                                // and if the leader is unknown they should fail signature check.
-                                // So here we should expect to know the slot leader and otherwise
-                                // skip the shred.
-                                let slot_leader = Arc::new(leader_schedule_cache.slot_leader_at(slot, Some(&working_bank))?);
                                 let active_clique_members: Vec<_> = clique_status
                                     .read()
                                     .unwrap()
@@ -410,7 +400,7 @@ impl CliqueStage {
                                     .collect();
                                 let cluster_nodes = Arc::new(ClusterNodes::<CliqueStage>::new(&cluster_info, &active_clique_members));
                             
-                                Some(izip!(shreds, repeat(slot_leader), repeat(cluster_nodes)))
+                                Some(izip!(shreds, repeat(cluster_nodes)))
                             })
                             .flatten()
                             .collect();
@@ -427,11 +417,10 @@ impl CliqueStage {
                             shreds
                                 .into_iter()
                                 .enumerate()
-                                .map(|(index, ((key, shred), slot_leader, cluster_nodes))| {
+                                .map(|(index, ((key, shred), cluster_nodes))| {
                                     let (_root_distance, transmit_attempts, transmit_errors) = retransmit_shred(
                                         &key,
                                         &shred,
-                                        &slot_leader,
                                         &cluster_nodes,
                                         socket_addr_space,
                                         &clique_outbound_sockets[index % clique_outbound_sockets.len()],
@@ -443,12 +432,11 @@ impl CliqueStage {
                             thread_pool.install(|| {
                                 shreds
                                     .into_par_iter()
-                                    .map(|((key, shred), slot_leader, cluster_nodes)| {
+                                    .map(|((key, shred), cluster_nodes)| {
                                         let index = thread_pool.current_thread_index().unwrap();
                                         let (_root_distance, transmit_attempts, transmit_errors) = retransmit_shred(
                                             &key,
                                             &shred,
-                                            &slot_leader,
                                             &cluster_nodes,
                                             socket_addr_space,
                                             &clique_outbound_sockets[index % clique_outbound_sockets.len()],
@@ -484,13 +472,12 @@ impl CliqueStage {
 fn retransmit_shred(
     key: &ShredId,
     shred: &[u8],
-    slot_leader: &Pubkey,
     cluster_nodes: &ClusterNodes<CliqueStage>,
     socket_addr_space: &SocketAddrSpace,
     socket: &UdpSocket,
 ) -> (/*root_distance:*/ usize, /*num_nodes:*/ usize, /*num_failed*/ usize) {
     let (root_distance, addrs) =
-        cluster_nodes.get_retransmit_addrs(slot_leader, key, DATA_PLANE_FANOUT);
+        cluster_nodes.get_retransmit_addrs( key, DATA_PLANE_FANOUT);
 
     let addrs: Vec<_> = addrs
         .into_iter()

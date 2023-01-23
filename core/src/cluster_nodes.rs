@@ -1,3 +1,5 @@
+use std::cmp::min;
+
 use crate::clique_stage::CliqueStage;
 
 use {
@@ -148,9 +150,6 @@ impl ClusterNodes<BroadcastStage> {
 
 impl ClusterNodes<CliqueStage> {
     pub fn new(cluster_info: &ClusterInfo, clique_nodes: &Vec<(Pubkey, SocketAddr)>) -> Self {
-
-        let self_pubkey = cluster_info.id();
-
         // all nodes in clique have the same stake weight
         let stake = 1;
         // The local node itself.
@@ -186,7 +185,6 @@ impl ClusterNodes<CliqueStage> {
 
     pub(crate) fn get_retransmit_addrs(
         &self,
-        slot_leader: &Pubkey,
         shred: &ShredId,
         fanout: usize,
     ) -> (/*root_distance:*/ usize, Vec<SocketAddr>) {
@@ -196,7 +194,7 @@ impl ClusterNodes<CliqueStage> {
             children,
             addrs,
             frwds,
-        } = self.get_retransmit_peers(slot_leader, shred, fanout);
+        } = self.get_retransmit_peers(shred, fanout);
         if neighbors.is_empty() {
             let peers = children
                 .into_iter()
@@ -234,74 +232,73 @@ impl ClusterNodes<CliqueStage> {
         (root_distance, peers.collect())
     }
 
+    // this creates a graph that has the following structure & root distances for F=fanout:
+    // 0: [], there are no nodes with root distance 0
+    // 1: [0..F), all nodes w/ root distance 1 are linked as neighbours
+    // 2: [[F..2F),...,[F^2..F^2+F)], all nodes w/ root distance >=2 are linked to their parent [0..F)
+    // all neighbour and parent-child links are bi-directional, but child->parent is included in neighbors
+    // most 
     pub fn get_retransmit_peers(
         &self,
-        slot_leader: &Pubkey,
         shred: &ShredId,
         fanout: usize,
     ) -> RetransmitPeers {
-        let shred_seed = shred.seed(slot_leader);
-        let mut weighted_shuffle = self.weighted_shuffle.clone();
-        // Exclude slot leader from list of nodes.
-        if slot_leader == &self.pubkey {
-            error!("retransmit from slot leader: {}", slot_leader);
-        } else if let Some(index) = self.index.get(slot_leader) {
-            weighted_shuffle.remove_index(*index);
-        };
+        let shred_seed = shred.seed(&Pubkey::default());
+        let weighted_shuffle = self.weighted_shuffle.clone();
+
         let mut addrs = HashMap::<SocketAddr, Pubkey>::with_capacity(self.nodes.len());
-        let mut frwds = HashMap::<SocketAddr, Pubkey>::with_capacity(self.nodes.len());
+        let frwds = Default::default();
         let mut rng = ChaChaRng::from_seed(shred_seed);
-        let drop_redundant_turbine_path = true;
         let nodes: Vec<_> = weighted_shuffle
             .shuffle(&mut rng)
             .map(|index| &self.nodes[index])
             .inspect(|node| {
                 if let Some(node) = node.contact_info() {
                     addrs.entry(node.tvu).or_insert(node.id);
-                    if !drop_redundant_turbine_path {
-                        frwds.entry(node.tvu_forwards).or_insert(node.id);
-                    }
                 }
             })
             .collect();
+
         let self_index = nodes
             .iter()
             .position(|node| node.pubkey() == self.pubkey)
             .unwrap();
-        if drop_redundant_turbine_path {
-            let root_distance = if self_index == 0 {
-                0
-            } else if self_index <= fanout {
-                1
-            } else if self_index <= fanout.saturating_add(1).saturating_mul(fanout) {
-                2
-            } else {
-                3 // If changed, update MAX_NUM_TURBINE_HOPS.
-            };
-            let peers = get_retransmit_peers(fanout, self_index, &nodes);
-            return RetransmitPeers {
-                root_distance,
-                neighbors: Vec::default(),
-                children: peers.collect(),
-                addrs,
-                frwds,
-            };
+
+        // children can lie outside of the array range, but skip & take handle that case
+        let children_start = (self_index + 1) * fanout;
+        let children = nodes.iter().skip(children_start).take(fanout).map(|n| *n).collect();
+
+        // calculate root_distance and level_end_index
+        let mut root_distance = 1;
+        while root_distance < 10 {
+            let level_end_index = (0..root_distance).map(|rd| fanout.pow(rd)).sum();
+            if self_index < level_end_index { break }
+            root_distance += 1;
         }
-        let root_distance = if self_index == 0 {
-            0
-        } else if self_index < fanout {
-            1
-        } else if self_index < fanout.saturating_add(1).saturating_mul(fanout) {
-            2
+
+        let neighbors = if root_distance == 1 {
+            // top level has no parent relationship, only neighbors
+            // ensure neighbor indexes don't lie outside of array range
+            let l1_len = min(nodes.len(), fanout);
+            let left_neighbor = min(l1_len - 1, self_index + fanout - 1) % fanout;
+            let right_neighbor = (self_index + 1) % l1_len;
+            if l1_len == 1 {
+                // if there's only one node, it doesn't have any neighbors
+                vec![]
+            } else if l1_len == 2 {
+                // left_neighbor == right_neighbor, so we only need to return it once
+                vec![nodes[left_neighbor]]
+            } else {
+                vec![nodes[left_neighbor], nodes[right_neighbor]]
+            }
         } else {
-            3 // If changed, update MAX_NUM_TURBINE_HOPS.
+            // lower levels only have their parent as neighbor, no range checks needed
+            let parent_index = (self_index / fanout) - 1;
+            vec![nodes[parent_index]]
         };
-        let (neighbors, children) = compute_retransmit_peers(fanout, self_index, &nodes);
-        // Assert that the node itself is included in the set of neighbors, at
-        // the right offset.
-        debug_assert_eq!(neighbors[self_index % fanout].pubkey(), self.pubkey);
+
         RetransmitPeers {
-            root_distance,
+            root_distance: root_distance as usize,
             neighbors,
             children,
             addrs,
@@ -330,28 +327,8 @@ impl ClusterNodes<RetransmitStage> {
             addrs,
             frwds,
         } = self.get_retransmit_peers(slot_leader, shred, root_bank, fanout);
-        if neighbors.is_empty() {
-            let peers = children
-                .into_iter()
-                .filter_map(Node::contact_info)
-                .filter(|node| addrs.get(&node.tvu) == Some(&node.id))
-                .map(|node| node.tvu)
-                .collect();
-            return (root_distance, peers);
-        }
-        // If the node is on the critical path (i.e. the first node in each
-        // neighborhood), it should send the packet to tvu socket of its
-        // children and also tvu_forward socket of its neighbors. Otherwise it
-        // should only forward to tvu_forwards socket of its children.
-        if neighbors[0].pubkey() != self.pubkey {
-            let peers = children
-                .into_iter()
-                .filter_map(Node::contact_info)
-                .filter(|node| frwds.get(&node.tvu_forwards) == Some(&node.id))
-                .map(|node| node.tvu_forwards);
-            return (root_distance, peers.collect());
-        }
-        // First neighbor is this node itself, so skip it.
+
+        // Neigbors can include duplicates
         let peers = neighbors[1..]
             .iter()
             .filter_map(|node| node.contact_info())

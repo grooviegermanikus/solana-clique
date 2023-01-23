@@ -58,6 +58,7 @@ pub struct Tvu {
     fetch_stage: ShredFetchStage,
     shred_sigverify: JoinHandle<()>,
     retransmit_stage: RetransmitStage,
+    clique_stage: CliqueStage,
     window_service: WindowService,
     cluster_slots_service: ClusterSlotsService,
     replay_stage: ReplayStage,
@@ -175,15 +176,15 @@ impl Tvu {
             turbine_disabled,
         );
 
-
+        let clique_bank_forks = bank_forks.clone();
+        let slot_query = move || clique_bank_forks.read().unwrap().highest_slot();
         let clique_stage = CliqueStage::new(
-            bank_forks.clone(),
             cluster_info.clone(),
             clique_outbound_receiver,
             Arc::new(clique_outbound_sockets),
             exit.clone(),
             authorized_voter_keypairs.read().unwrap()[0].clone(),
-            leader_schedule_cache.clone(),
+            slot_query
         );
         let retransmit_stage = RetransmitStage::new(
             bank_forks.clone(),
@@ -325,6 +326,7 @@ impl Tvu {
             fetch_stage,
             shred_sigverify,
             retransmit_stage,
+            clique_stage,
             window_service,
             cluster_slots_service,
             replay_stage,
@@ -346,6 +348,7 @@ impl Tvu {
             self.ledger_cleanup_service.unwrap().join()?;
         }
         self.replay_stage.join()?;
+        self.clique_stage.join()?;
         self.cost_update_service.join()?;
         self.voting_service.join()?;
         if let Some(warmup_service) = self.warm_quic_cache_service {
