@@ -137,7 +137,7 @@ impl<T> ClusterNodes<T> {
 impl ClusterNodes<BroadcastStage> {
     pub fn new(cluster_info: &ClusterInfo, stakes: &HashMap<Pubkey, u64>) -> Self {
         let nodes = collect_stake_sorted_nodes(cluster_info, stakes);
-        new_cluster_nodes(cluster_info, nodes)
+        new_cluster_nodes(cluster_info.id(), nodes)
     }
 
     pub(crate) fn get_broadcast_peer(&self, shred: &ShredId) -> Option<&ContactInfo> {
@@ -149,38 +149,30 @@ impl ClusterNodes<BroadcastStage> {
 }
 
 impl ClusterNodes<CliqueStage> {
-    pub fn new(cluster_info: &ClusterInfo, clique_nodes: &Vec<(Pubkey, SocketAddr)>) -> Self {
+    pub fn new(self_pubkey: Pubkey, clique_nodes: &Vec<(Pubkey, SocketAddr)>) -> Self {
         // all nodes in clique have the same stake weight
         let stake = 1;
-        // The local node itself.
-        let nodes = std::iter::once({
-            let node = NodeId::from(cluster_info.my_contact_info());
-            Node { node, stake }
-        })
-        // All clique nodes.
-        .chain(
-            clique_nodes
-                .iter()
-                .map(|(pk,addr)| {
 
-                    let sparse_contact_info = ContactInfo {
-                        id: *pk,
-                        tvu: *addr,
-                        ..Default::default()
-                    };
-                    Node {
-                        node: NodeId::from(sparse_contact_info),
-                        stake,
-                    }
-                }),
-        )
-        .sorted_by_key(|node| Reverse(node.pubkey()))
-        // Since sorted_by_key is stable, in case of duplicates, this
-        // will keep nodes with contact-info.
-        .dedup_by(|a, b| a.pubkey() == b.pubkey())
-        .collect();
+        let nodes = clique_nodes
+            .iter()
+            .map(|(pk, addr)| {
+                let sparse_contact_info = ContactInfo {
+                    id: *pk,
+                    tvu: *addr,
+                    ..Default::default()
+                };
+                Node {
+                    node: NodeId::from(sparse_contact_info),
+                    stake,
+                }
+            })
+            .sorted_by_key(|node| Reverse(node.pubkey()))
+            // Since sorted_by_key is stable, in case of duplicates, this
+            // will keep nodes with contact-info.
+            .dedup_by(|a, b| a.pubkey() == b.pubkey())
+            .collect();
 
-        new_cluster_nodes(cluster_info, nodes)
+        new_cluster_nodes(self_pubkey, nodes)
     }
 
     pub(crate) fn get_retransmit_addrs(
@@ -236,13 +228,10 @@ impl ClusterNodes<CliqueStage> {
     // 0: [], there are no nodes with root distance 0
     // 1: [0..F), all nodes w/ root distance 1 are linked as neighbours
     // 2: [[F..2F),...,[F^2..F^2+F)], all nodes w/ root distance >=2 are linked to their parent [0..F)
-    // all neighbour and parent-child links are bi-directional, but child->parent is included in neighbors
-    // most 
-    pub fn get_retransmit_peers(
-        &self,
-        shred: &ShredId,
-        fanout: usize,
-    ) -> RetransmitPeers {
+    // all neighbour and parent-child links are bi-directional
+    // RetransmitPeers.neighbors contains neigbor <-> neigbor and child->parent 
+    // RetransmitPeers.children contains parent -> child
+    pub fn get_retransmit_peers(&self, shred: &ShredId, fanout: usize) -> RetransmitPeers {
         let shred_seed = shred.seed(&Pubkey::default());
         let weighted_shuffle = self.weighted_shuffle.clone();
 
@@ -266,13 +255,20 @@ impl ClusterNodes<CliqueStage> {
 
         // children can lie outside of the array range, but skip & take handle that case
         let children_start = (self_index + 1) * fanout;
-        let children = nodes.iter().skip(children_start).take(fanout).map(|n| *n).collect();
+        let children = nodes
+            .iter()
+            .skip(children_start)
+            .take(fanout)
+            .map(|n| *n)
+            .collect();
 
         // calculate root_distance and level_end_index
         let mut root_distance = 1;
         while root_distance < 10 {
             let level_end_index = (0..root_distance).map(|rd| fanout.pow(rd)).sum();
-            if self_index < level_end_index { break }
+            if self_index < level_end_index {
+                break;
+            }
             root_distance += 1;
         }
 
@@ -310,7 +306,7 @@ impl ClusterNodes<CliqueStage> {
 impl ClusterNodes<RetransmitStage> {
     pub fn new(cluster_info: &ClusterInfo, stakes: &HashMap<Pubkey, u64>) -> Self {
         let nodes = collect_stake_sorted_nodes(cluster_info, stakes);
-        new_cluster_nodes(cluster_info, nodes)
+        new_cluster_nodes(cluster_info.id(), nodes)
     }
 
     pub(crate) fn get_retransmit_addrs(
@@ -421,12 +417,8 @@ impl ClusterNodes<RetransmitStage> {
     }
 }
 
- // nodes is expected to be sorted by (stake, pubkey) in descending order
-pub fn new_cluster_nodes<T: 'static>(
-    cluster_info: &ClusterInfo,
-    nodes: Vec<Node>,
-) -> ClusterNodes<T> {
-    let self_pubkey = cluster_info.id();
+// nodes is expected to be sorted by (stake, pubkey) in descending order
+pub fn new_cluster_nodes<T: 'static>(self_pubkey: Pubkey, nodes: Vec<Node>) -> ClusterNodes<T> {
     let index: HashMap<_, _> = nodes
         .iter()
         .enumerate()
@@ -449,7 +441,10 @@ pub fn new_cluster_nodes<T: 'static>(
 
 // All staked nodes + other known tvu-peers + the node itself;
 // sorted by (stake, pubkey) in descending order.
-fn collect_stake_sorted_nodes(cluster_info: &ClusterInfo, stakes: &HashMap<Pubkey, u64>) -> Vec<Node> {
+fn collect_stake_sorted_nodes(
+    cluster_info: &ClusterInfo,
+    stakes: &HashMap<Pubkey, u64>,
+) -> Vec<Node> {
     let self_pubkey = cluster_info.id();
 
     // The local node itself.
@@ -473,14 +468,13 @@ fn collect_stake_sorted_nodes(cluster_info: &ClusterInfo, stakes: &HashMap<Pubke
                 node: NodeId::from(pubkey),
                 stake,
             }),
-    ).sorted_by_key(|node| Reverse((node.stake, node.pubkey())))
+    )
+    .sorted_by_key(|node| Reverse((node.stake, node.pubkey())))
     // Since sorted_by_key is stable, in case of duplicates, this
     // will keep nodes with contact-info.
     .dedup_by(|a, b| a.pubkey() == b.pubkey())
     .collect()
 }
-
-
 
 // root     : [0]
 // 1st layer: [1, 2, ..., fanout]
@@ -568,8 +562,9 @@ impl<T: 'static> ClusterNodesCache<T> {
             }
             inc_new_counter_info!("cluster_nodes-unknown_epoch_staked_nodes_root", 1);
         }
-        let nodes = collect_stake_sorted_nodes(cluster_info, &epoch_staked_nodes.unwrap_or_default());
-        let nodes = Arc::new(new_cluster_nodes::<T>(cluster_info, nodes));
+        let nodes =
+            collect_stake_sorted_nodes(cluster_info, &epoch_staked_nodes.unwrap_or_default());
+        let nodes = Arc::new(new_cluster_nodes::<T>(cluster_info.id(), nodes));
         *entry = Some((Instant::now(), Arc::clone(&nodes)));
         nodes
     }

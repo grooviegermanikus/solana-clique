@@ -28,7 +28,7 @@ use solana_gossip::{cluster_info::ClusterInfo, legacy_contact_info::LegacyContac
 use solana_ledger::{shred::{ShredId, layout::get_shred_id}};
 use solana_measure::measure::Measure;
 use solana_rayon_threadlimit::get_thread_count;
-use solana_sdk::pubkey::Pubkey;
+use solana_sdk::{pubkey::Pubkey, signer::Signer};
 use solana_streamer::{socket::SocketAddrSpace, sendmmsg::{SendPktsError, multi_target_send}};
 
 use crate::{cluster_nodes::ClusterNodes, packet_hasher::PacketHasher, retransmit_stage::{maybe_reset_shreds_received_cache, should_skip_retransmit}};
@@ -120,27 +120,28 @@ pub struct CliqueStage {
 
 impl CliqueStage {
     pub fn new<S>(
-        cluster_info: Arc<ClusterInfo>,
         clique_outbound_receiver: Receiver<Vec</*shred:*/ Vec<u8>>>,
         clique_outbound_sockets: Arc<Vec<UdpSocket>>,
         exit: Arc<AtomicBool>,
         identity_keypair: Arc<solana_sdk::signature::Keypair>,
+        shred_inbound: SocketAddr,
+        socket_addr_space: SocketAddrSpace,
         slot_query: S
     ) -> Self where S: 'static + Send + Fn() -> u64 {
         let mut stats = CliqueStageStats::new();
         
         let boot_slot = slot_query();
         let clique_status = Arc::new(RwLock::new(HashMap::new()));
-        let shred_inbound = cluster_info.my_contact_info().tvu;
         
         let gossip_clique_status = clique_status.clone();
         let gossip_exit= exit.clone();
+        let gossip_identity_keypair = identity_keypair.clone();
         let gossip_thread_hdl = Builder::new()
             .name("solCliqueGossip".to_string())
             .spawn(move || {
 
                 // Derive peer id from solana keypair
-                let copy = identity_keypair.secret().as_bytes().clone();
+                let copy = gossip_identity_keypair.secret().as_bytes().clone();
                 let secret_key = identity::ed25519::SecretKey::from_bytes(copy)
                     .expect("CliqueStage solana_keypair is ed25519 compatible");
                 let local_key = identity::Keypair::Ed25519(secret_key.into());
@@ -251,6 +252,7 @@ impl CliqueStage {
                             info!("CliqueStage Publish error: {e:?}");
                         }
 
+                        // add node itself to the clique
                         gossip_clique_status.write().unwrap().insert(peer_id_to_solana_pubkey(local_peer_id), message);
                         last_heartbeat = Instant::now();    
                     }
@@ -398,7 +400,7 @@ impl CliqueStage {
                                     .filter(|(_, m)| m.boot_slot + CLIQUE_WARMUP_SLOTS < slot && slot < m.current_slot + CLIQUE_TIMEOUT_SLOTS )
                                     .map(|(pk,m)|(*pk, m.shred_inbound))
                                     .collect();
-                                let cluster_nodes = Arc::new(ClusterNodes::<CliqueStage>::new(&cluster_info, &active_clique_members));
+                                let cluster_nodes = Arc::new(ClusterNodes::<CliqueStage>::new(identity_keypair.pubkey(), &active_clique_members));
                             
                                 Some(izip!(shreds, repeat(cluster_nodes)))
                             })
@@ -412,7 +414,6 @@ impl CliqueStage {
                         let mut transmit_execute = Measure::start("clique_transmit_execute");
                         let init_stats = (0,0);
                         let merge_stats = |t1: (usize, usize), t2: (usize,usize)| (t1.0 + t2.0, t1.1 + t2.1);
-                        let socket_addr_space = cluster_info.socket_addr_space();
                         let transmit_stats = if shreds.len() < PAR_ITER_MIN_NUM_SHREDS {
                             shreds
                                 .into_iter()
@@ -422,7 +423,7 @@ impl CliqueStage {
                                         &key,
                                         &shred,
                                         &cluster_nodes,
-                                        socket_addr_space,
+                                        &socket_addr_space,
                                         &clique_outbound_sockets[index % clique_outbound_sockets.len()],
                                     );
                                     (transmit_attempts, transmit_errors)
@@ -438,7 +439,7 @@ impl CliqueStage {
                                             &key,
                                             &shred,
                                             &cluster_nodes,
-                                            socket_addr_space,
+                                            &socket_addr_space,
                                             &clique_outbound_sockets[index % clique_outbound_sockets.len()],
                                         );
                                         (transmit_attempts, transmit_errors)

@@ -179,11 +179,12 @@ impl Tvu {
         let clique_bank_forks = bank_forks.clone();
         let slot_query = move || clique_bank_forks.read().unwrap().highest_slot();
         let clique_stage = CliqueStage::new(
-            cluster_info.clone(),
             clique_outbound_receiver,
             Arc::new(clique_outbound_sockets),
             exit.clone(),
             authorized_voter_keypairs.read().unwrap()[0].clone(),
+            cluster_info.my_contact_info().tvu,
+            cluster_info.socket_addr_space().clone(),
             slot_query
         );
         let retransmit_stage = RetransmitStage::new(
