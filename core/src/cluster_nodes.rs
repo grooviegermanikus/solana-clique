@@ -187,41 +187,17 @@ impl ClusterNodes<CliqueStage> {
             addrs,
             frwds,
         } = self.get_retransmit_peers(shred, fanout);
-        if neighbors.is_empty() {
-            let peers = children
-                .into_iter()
-                .filter_map(Node::contact_info)
-                .filter(|node| addrs.get(&node.tvu) == Some(&node.id))
-                .map(|node| node.tvu)
-                .collect();
-            return (root_distance, peers);
-        }
-        // If the node is on the critical path (i.e. the first node in each
-        // neighborhood), it should send the packet to tvu socket of its
-        // children and also tvu_forward socket of its neighbors. Otherwise it
-        // should only forward to tvu_forwards socket of its children.
-        if neighbors[0].pubkey() != self.pubkey {
-            let peers = children
-                .into_iter()
-                .filter_map(Node::contact_info)
-                .filter(|node| frwds.get(&node.tvu_forwards) == Some(&node.id))
-                .map(|node| node.tvu_forwards);
-            return (root_distance, peers.collect());
-        }
-        // First neighbor is this node itself, so skip it.
-        let peers = neighbors[1..]
+
+        // Neigbors can include duplicates
+        let peers = neighbors
             .iter()
-            .filter_map(|node| node.contact_info())
-            .filter(|node| frwds.get(&node.tvu_forwards) == Some(&node.id))
-            .map(|node| node.tvu_forwards)
-            .chain(
-                children
-                    .into_iter()
-                    .filter_map(Node::contact_info)
-                    .filter(|node| addrs.get(&node.tvu) == Some(&node.id))
-                    .map(|node| node.tvu),
-            );
-        (root_distance, peers.collect())
+            .chain(children.iter())
+            .filter_map(|n| n.contact_info())
+            .filter(|node| addrs.get(&node.tvu) == Some(&node.id))
+            .map(|node| node.tvu)
+            .dedup()
+            .collect();
+        (root_distance, peers)
     }
 
     // this creates a graph that has the following structure & root distances for F=fanout:
@@ -247,6 +223,16 @@ impl ClusterNodes<CliqueStage> {
                 }
             })
             .collect();
+
+        if nodes.len() == 0 {
+            return RetransmitPeers {
+                root_distance: 0usize,
+                neighbors: Default::default(),
+                children: Default::default(),
+                addrs,
+                frwds
+            };
+        }
 
         let self_index = nodes
             .iter()
@@ -308,7 +294,7 @@ impl ClusterNodes<RetransmitStage> {
         let nodes = collect_stake_sorted_nodes(cluster_info, stakes);
         new_cluster_nodes(cluster_info.id(), nodes)
     }
-
+    
     pub(crate) fn get_retransmit_addrs(
         &self,
         slot_leader: &Pubkey,
@@ -323,8 +309,28 @@ impl ClusterNodes<RetransmitStage> {
             addrs,
             frwds,
         } = self.get_retransmit_peers(slot_leader, shred, root_bank, fanout);
-
-        // Neigbors can include duplicates
+        if neighbors.is_empty() {
+            let peers = children
+                .into_iter()
+                .filter_map(Node::contact_info)
+                .filter(|node| addrs.get(&node.tvu) == Some(&node.id))
+                .map(|node| node.tvu)
+                .collect();
+            return (root_distance, peers);
+        }
+        // If the node is on the critical path (i.e. the first node in each
+        // neighborhood), it should send the packet to tvu socket of its
+        // children and also tvu_forward socket of its neighbors. Otherwise it
+        // should only forward to tvu_forwards socket of its children.
+        if neighbors[0].pubkey() != self.pubkey {
+            let peers = children
+                .into_iter()
+                .filter_map(Node::contact_info)
+                .filter(|node| frwds.get(&node.tvu_forwards) == Some(&node.id))
+                .map(|node| node.tvu_forwards);
+            return (root_distance, peers.collect());
+        }
+        // First neighbor is this node itself, so skip it.
         let peers = neighbors[1..]
             .iter()
             .filter_map(|node| node.contact_info())
