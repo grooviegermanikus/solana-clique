@@ -24,7 +24,7 @@ use libp2p::{
 use log::info;
 use lru::LruCache;
 use rayon::{ThreadPoolBuilder, prelude::{IntoParallelIterator, ParallelIterator}};
-use solana_gossip::{cluster_info::ClusterInfo, legacy_contact_info::LegacyContactInfo};
+use solana_gossip::legacy_contact_info::LegacyContactInfo;
 use solana_ledger::{shred::{ShredId, layout::get_shred_id}};
 use solana_measure::measure::Measure;
 use solana_rayon_threadlimit::get_thread_count;

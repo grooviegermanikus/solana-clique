@@ -251,8 +251,8 @@ impl ClusterNodes<CliqueStage> {
         // calculate root_distance and level_end_index
         let mut root_distance = 1;
         while root_distance < 10 {
-            let level_end_index = (0..root_distance).map(|rd| fanout.pow(rd)).sum();
-            if self_index < level_end_index {
+            let next_level_start_index = (1..root_distance+1).map(|rd| fanout.pow(rd)).sum();
+            if self_index < next_level_start_index {
                 break;
             }
             root_distance += 1;
@@ -689,6 +689,8 @@ fn check_feature_activation(feature: &Pubkey, shred_slot: Slot, root_bank: &Bank
 
 #[cfg(test)]
 mod tests {
+    use solana_ledger::shred::layout::get_shred_id;
+
     use super::*;
 
     #[test]
@@ -830,5 +832,73 @@ mod tests {
             let mut retransmit_peers = get_retransmit_peers(/*fanout:*/ 3, k, &index);
             assert_eq!(retransmit_peers.next(), None);
         }
+    }
+
+
+    fn generate_cluster_nodes(num: usize) -> Vec<ClusterNodes<CliqueStage>> {
+        let keys: Vec<Pubkey> = (0..num).map(|i| Pubkey::find_program_address(&[&[(i / 256) as u8, (i % 256) as u8]], &Pubkey::default()).0).collect();
+        let addrs: Vec<SocketAddr> = (0..num).map(|i| format!("1.2.3.4:{}", 13000+i).parse().unwrap()).collect();
+        let clique = (0..num).map(|i| (keys[i], addrs[i])).collect();
+        return (0..num).map(|i| ClusterNodes::<CliqueStage>::new(keys[i], &clique)).collect();
+    }
+
+    #[test]
+    fn test_get_clique_peers_solo() {
+        let single_node_cluster = generate_cluster_nodes(1);
+        let shred_id = get_shred_id(&(0..83).collect::<Vec<u8>>().as_slice()).unwrap();
+        let peers = single_node_cluster[0].get_retransmit_peers(&shred_id, 2);
+        assert_eq!(peers.root_distance, 1);
+        assert_eq!(peers.neighbors.len(), 0);
+        assert_eq!(peers.children.len(), 0);
+    }
+
+    #[test]
+    fn test_get_clique_peers_neighbors() {
+        let dual_node_cluster = generate_cluster_nodes(4);
+        let shred_id = get_shred_id(&(0..83).collect::<Vec<u8>>().as_slice()).unwrap();
+
+        // L1: [0: n=1,3] [1: n=0,2] [2: n=1,3] [3: n=0,2]
+        for peers in dual_node_cluster.iter().map(|ns| ns.get_retransmit_peers(&shred_id, 4)) {
+            assert_eq!(peers.root_distance, 1);
+            assert_eq!(peers.neighbors.len(), 2);
+            assert_eq!(peers.children.len(), 0);
+        }
+    }
+
+
+    #[test]
+    fn test_get_clique_peers_children() {
+        let deep_cluster = generate_cluster_nodes(13);
+        let shred_id = get_shred_id(&(0..83).collect::<Vec<u8>>().as_slice()).unwrap();
+        let peers: Vec<_> = deep_cluster.iter().map(|ns| ns.get_retransmit_peers(&shred_id, 3)).collect();
+
+        // L1: [0: n=1,2 c=4,5,6] [1: n=0,2 c=7,8,9] [2: n=0,1 c=10,11,12]
+        let l1: Vec<_> = peers.iter().filter(|ps| ps.root_distance == 1).collect();
+        assert_eq!(l1.len(), 3);
+        for peers in l1 {
+            assert_eq!(peers.neighbors.len(), 2);
+            assert_eq!(peers.children.len(), 3);
+        }
+
+        // L2: [4: n=0 c=12], [5: n=0], ..., [11: n=2]
+        let l2: Vec<_> = peers.iter().filter(|ps| ps.root_distance == 2).sorted_by_key(|ps| -1 * ps.children.len() as i64).collect();
+        assert_eq!(l2.len(), 9);
+        for (i, peers) in l2.iter().enumerate() {
+            assert_eq!(peers.neighbors.len(), 1);
+            if i == 0 {
+                assert_eq!(peers.children.len(), 1);
+             } else {
+                assert_eq!(peers.children.len(), 0);
+             }
+        }
+
+        // L3: [12: n=4]
+        let l3: Vec<_> = peers.iter().filter(|ps| ps.root_distance == 3).collect();
+        assert_eq!(l3.len(), 1);
+        for peers in l3 {
+            assert_eq!(peers.neighbors.len(), 1);
+            assert_eq!(peers.children.len(), 0);
+        }
+
     }
 }
