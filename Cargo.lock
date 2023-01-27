@@ -3034,6 +3034,7 @@ checksum = "c7d73b3f436185384286bd8098d17ec07c9a7d2388a6599f824d8502b529702a"
 [[package]]
 name = "libp2p"
 version = "0.51.0"
+source = "git+https://github.com/mschneider/rust-libp2p/?branch=solana-compat#67bf9e84297e8c42eaab3e7b0101fc68a8a31622"
 dependencies = [
  "bytes",
  "futures 0.3.24",
@@ -3061,6 +3062,7 @@ dependencies = [
 [[package]]
 name = "libp2p-core"
 version = "0.39.0"
+source = "git+https://github.com/mschneider/rust-libp2p/?branch=solana-compat#67bf9e84297e8c42eaab3e7b0101fc68a8a31622"
 dependencies = [
  "asn1_der",
  "bs58",
@@ -3092,6 +3094,7 @@ dependencies = [
 [[package]]
 name = "libp2p-dns"
 version = "0.39.0"
+source = "git+https://github.com/mschneider/rust-libp2p/?branch=solana-compat#67bf9e84297e8c42eaab3e7b0101fc68a8a31622"
 dependencies = [
  "async-std-resolver",
  "futures 0.3.24",
@@ -3105,6 +3108,7 @@ dependencies = [
 [[package]]
 name = "libp2p-gossipsub"
 version = "0.44.0"
+source = "git+https://github.com/mschneider/rust-libp2p/?branch=solana-compat#67bf9e84297e8c42eaab3e7b0101fc68a8a31622"
 dependencies = [
  "asynchronous-codec",
  "base64 0.20.0",
@@ -3133,6 +3137,7 @@ dependencies = [
 [[package]]
 name = "libp2p-identify"
 version = "0.42.0"
+source = "git+https://github.com/mschneider/rust-libp2p/?branch=solana-compat#67bf9e84297e8c42eaab3e7b0101fc68a8a31622"
 dependencies = [
  "asynchronous-codec",
  "futures 0.3.24",
@@ -3152,6 +3157,7 @@ dependencies = [
 [[package]]
 name = "libp2p-mdns"
 version = "0.43.0"
+source = "git+https://github.com/mschneider/rust-libp2p/?branch=solana-compat#67bf9e84297e8c42eaab3e7b0101fc68a8a31622"
 dependencies = [
  "async-io",
  "data-encoding",
@@ -3170,6 +3176,7 @@ dependencies = [
 [[package]]
 name = "libp2p-metrics"
 version = "0.12.0"
+source = "git+https://github.com/mschneider/rust-libp2p/?branch=solana-compat#67bf9e84297e8c42eaab3e7b0101fc68a8a31622"
 dependencies = [
  "libp2p-core",
  "libp2p-gossipsub",
@@ -3182,6 +3189,7 @@ dependencies = [
 [[package]]
 name = "libp2p-noise"
 version = "0.42.0"
+source = "git+https://github.com/mschneider/rust-libp2p/?branch=solana-compat#67bf9e84297e8c42eaab3e7b0101fc68a8a31622"
 dependencies = [
  "bytes",
  "curve25519-dalek 3.2.1",
@@ -3203,6 +3211,7 @@ dependencies = [
 [[package]]
 name = "libp2p-ping"
 version = "0.42.0"
+source = "git+https://github.com/mschneider/rust-libp2p/?branch=solana-compat#67bf9e84297e8c42eaab3e7b0101fc68a8a31622"
 dependencies = [
  "futures 0.3.24",
  "futures-timer",
@@ -3217,6 +3226,7 @@ dependencies = [
 [[package]]
 name = "libp2p-quic"
 version = "0.7.0-alpha.2"
+source = "git+https://github.com/mschneider/rust-libp2p/?branch=solana-compat#67bf9e84297e8c42eaab3e7b0101fc68a8a31622"
 dependencies = [
  "async-std",
  "bytes",
@@ -3236,6 +3246,7 @@ dependencies = [
 [[package]]
 name = "libp2p-swarm"
 version = "0.42.0"
+source = "git+https://github.com/mschneider/rust-libp2p/?branch=solana-compat#67bf9e84297e8c42eaab3e7b0101fc68a8a31622"
 dependencies = [
  "async-std",
  "either",
@@ -3256,6 +3267,7 @@ dependencies = [
 [[package]]
 name = "libp2p-swarm-derive"
 version = "0.31.0"
+source = "git+https://github.com/mschneider/rust-libp2p/?branch=solana-compat#67bf9e84297e8c42eaab3e7b0101fc68a8a31622"
 dependencies = [
  "heck 0.4.0",
  "quote 1.0.18",
@@ -3265,6 +3277,7 @@ dependencies = [
 [[package]]
 name = "libp2p-tcp"
 version = "0.39.0"
+source = "git+https://github.com/mschneider/rust-libp2p/?branch=solana-compat#67bf9e84297e8c42eaab3e7b0101fc68a8a31622"
 dependencies = [
  "async-io",
  "futures 0.3.24",
@@ -3279,6 +3292,7 @@ dependencies = [
 [[package]]
 name = "libp2p-tls"
 version = "0.1.0-alpha.2"
+source = "git+https://github.com/mschneider/rust-libp2p/?branch=solana-compat#67bf9e84297e8c42eaab3e7b0101fc68a8a31622"
 dependencies = [
  "futures 0.3.24",
  "futures-rustls",
@@ -3295,6 +3309,7 @@ dependencies = [
 [[package]]
 name = "libp2p-yamux"
 version = "0.43.0"
+source = "git+https://github.com/mschneider/rust-libp2p/?branch=solana-compat#67bf9e84297e8c42eaab3e7b0101fc68a8a31622"
 dependencies = [
  "futures 0.3.24",
  "libp2p-core",
@@ -3656,6 +3671,7 @@ checksum = "e5ce46fe64a9d73be07dcbe690a38ce1b293be448fd8ce1e6c1b8062c9f72c6a"
 [[package]]
 name = "multistream-select"
 version = "0.12.1"
+source = "git+https://github.com/mschneider/rust-libp2p/?branch=solana-compat#67bf9e84297e8c42eaab3e7b0101fc68a8a31622"
 dependencies = [
  "bytes",
  "futures 0.3.24",
@@ -4614,6 +4630,7 @@ dependencies = [
 [[package]]
 name = "prost-codec"
 version = "0.3.0"
+source = "git+https://github.com/mschneider/rust-libp2p/?branch=solana-compat#67bf9e84297e8c42eaab3e7b0101fc68a8a31622"
 dependencies = [
  "asynchronous-codec",
  "bytes",
@@ -5276,6 +5293,7 @@ dependencies = [
 [[package]]
 name = "rw-stream-sink"
 version = "0.3.0"
+source = "git+https://github.com/mschneider/rust-libp2p/?branch=solana-compat#67bf9e84297e8c42eaab3e7b0101fc68a8a31622"
 dependencies = [
  "futures 0.3.24",
  "pin-project",
