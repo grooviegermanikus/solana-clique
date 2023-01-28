@@ -48,7 +48,7 @@ use {
     solana_sdk::{clock::Slot, pubkey::Pubkey, signature::Keypair},
     std::{
         collections::HashSet,
-        net::UdpSocket,
+        net::{SocketAddr, UdpSocket},
         sync::{atomic::AtomicBool, Arc, RwLock},
         thread::{self, JoinHandle},
     },
@@ -58,7 +58,7 @@ pub struct Tvu {
     fetch_stage: ShredFetchStage,
     shred_sigverify: JoinHandle<()>,
     retransmit_stage: RetransmitStage,
-    clique_stage: CliqueStage,
+    clique_stage: Option<CliqueStage>,
     window_service: WindowService,
     cluster_slots_service: ClusterSlotsService,
     replay_stage: ReplayStage,
@@ -133,6 +133,8 @@ impl Tvu {
         log_messages_bytes_limit: Option<usize>,
         connection_cache: &Arc<ConnectionCache>,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
+        clique_addr: Option<SocketAddr>,
+        clique_peers: Arc<Vec<SocketAddr>>
     ) -> Result<Self, String> {
         let TvuSockets {
             repair: repair_socket,
@@ -178,14 +180,18 @@ impl Tvu {
 
         let clique_bank_forks = bank_forks.clone();
         let slot_query = move || clique_bank_forks.read().unwrap().highest_slot();
-        let clique_stage = CliqueStage::new(
-            clique_outbound_receiver,
-            Arc::new(clique_outbound_sockets),
-            exit.clone(),
-            authorized_voter_keypairs.read().unwrap()[0].clone(),
-            cluster_info.my_contact_info().tvu,
-            cluster_info.socket_addr_space().clone(),
-            slot_query
+        let clique_stage = clique_addr.map( |clique_addr|
+            CliqueStage::new(
+                clique_addr,
+                clique_peers,
+                clique_outbound_receiver,
+                Arc::new(clique_outbound_sockets),
+                exit.clone(),
+                authorized_voter_keypairs.read().unwrap()[0].clone(),
+                cluster_info.my_contact_info().tvu,
+                cluster_info.socket_addr_space().clone(),
+                slot_query,
+            )
         );
         let retransmit_stage = RetransmitStage::new(
             bank_forks.clone(),
@@ -349,7 +355,9 @@ impl Tvu {
             self.ledger_cleanup_service.unwrap().join()?;
         }
         self.replay_stage.join()?;
-        self.clique_stage.join()?;
+        if let Some(clique_stage) = self.clique_stage {
+            clique_stage.join()?
+        }
         self.cost_update_service.join()?;
         self.voting_service.join()?;
         if let Some(warmup_service) = self.warm_quic_cache_service {
@@ -476,6 +484,8 @@ pub mod tests {
             None,
             &Arc::new(ConnectionCache::default()),
             &_ignored_prioritization_fee_cache,
+            None,
+            Default::default()
         )
         .expect("assume success");
         exit.store(true, Ordering::Relaxed);

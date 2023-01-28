@@ -19,7 +19,7 @@ use futures_lite::stream::StreamExt;
 use itertools::{Itertools, izip};
 use libp2p::{
     core, gossipsub, identify, identity, noise, ping, swarm::NetworkBehaviour, swarm::SwarmEvent,
-    tcp, yamux, Multiaddr, PeerId, Swarm, Transport,
+    tcp, yamux, Multiaddr, PeerId, Swarm, Transport, multiaddr::Protocol,
 };
 use log::info;
 use lru::LruCache;
@@ -120,6 +120,8 @@ pub struct CliqueStage {
 
 impl CliqueStage {
     pub fn new<S>(
+        bind_addr: SocketAddr,
+        bootstrap_peers: Arc<Vec<SocketAddr>>,
         clique_outbound_receiver: Receiver<Vec</*shred:*/ Vec<u8>>>,
         clique_outbound_sockets: Arc<Vec<UdpSocket>>,
         exit: Arc<AtomicBool>,
@@ -212,23 +214,15 @@ impl CliqueStage {
                 };
 
                 // Reach out to other nodes if specified
-                // TODO: configure from validator
-                for to_dial in std::env::args().skip(1) {
-                    if let Ok(addr) = Multiaddr::from_str(&to_dial) {
-                        info!("dialing {}", to_dial);
-                        swarm.dial(addr).expect("dial succeeds");
-                    }
+                for peer in bootstrap_peers.iter() {
+                    let addr = socket_addr_to_multi_addr(*peer);
+                    swarm.dial(addr.clone()).expect("dial succeeds");
+                    info!("dial peer {peer:?} {addr:?}");
                 }
 
                 // Listen on all interfaces
-                // TODO: configure port from validator / node
-                swarm
-                    .listen_on(
-                        "/ip4/0.0.0.0/tcp/0"
-                            .parse()
-                            .expect("CliqueStage valid listen_port"),
-                    )
-                    .expect("CliqueStage listen succeeds");
+                let listen_addr = socket_addr_to_multi_addr(bind_addr);
+                swarm.listen_on(listen_addr.clone()).expect(&format!("listen  succeeds {bind_addr:?} {listen_addr:?}"));
 
                 // build a minimal context to execute libp2p's futures
                 let waker = noop_waker();
@@ -511,3 +505,10 @@ fn peer_id_to_solana_pubkey(
     Pubkey::new_from_array(*pk_bytes)
 }
 
+fn socket_addr_to_multi_addr(
+    socket: SocketAddr
+) -> Multiaddr {
+    let mut addr = Multiaddr::from(socket.ip());
+    addr.push(Protocol::Tcp(socket.port()));
+    return addr
+}
