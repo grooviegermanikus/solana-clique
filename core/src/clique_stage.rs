@@ -10,7 +10,7 @@ use std::{
     },
     task::{Context, Poll},
     thread::{Builder, JoinHandle, self},
-    time::{Duration, Instant}, iter::repeat,
+    time::{Duration, Instant}, iter::{repeat, once},
 };
 
 use crossbeam_channel::Receiver;
@@ -136,6 +136,7 @@ impl CliqueStage {
         let gossip_clique_status = clique_status.clone();
         let gossip_exit= exit.clone();
         let gossip_identity_keypair = identity_keypair.clone();
+        let gossip_shred_inbound = shred_inbound.clone();
         let gossip_thread_hdl = Builder::new()
             .name("solCliqueGossip".to_string())
             .spawn(move || {
@@ -243,7 +244,7 @@ impl CliqueStage {
                     if last_heartbeat.elapsed() > GOSSIP_HEARTBEAT_CADENCE {   
                         let current_slot = slot_query();
                         let message = CliqueHeartbeatMessage {
-                            boot_slot, current_slot, shred_inbound
+                            boot_slot, current_slot, shred_inbound: gossip_shred_inbound
                         };
 
                         if let Err(e) = swarm
@@ -252,8 +253,6 @@ impl CliqueStage {
                             info!("CliqueStage Publish error: {e:?}");
                         }
 
-                        // add node itself to the clique
-                        gossip_clique_status.write().unwrap().insert(peer_id_to_solana_pubkey(local_peer_id), message);
                         last_heartbeat = Instant::now();    
                     }
 
@@ -399,6 +398,7 @@ impl CliqueStage {
                                     .iter()
                                     .filter(|(_, m)| m.boot_slot + CLIQUE_WARMUP_SLOTS < slot && slot < m.current_slot + CLIQUE_TIMEOUT_SLOTS )
                                     .map(|(pk,m)|(*pk, m.shred_inbound))
+                                    .chain(once((identity_keypair.pubkey(), shred_inbound)))
                                     .collect();
                                 let cluster_nodes = Arc::new(ClusterNodes::<CliqueStage>::new(identity_keypair.pubkey(), &active_clique_members));
                             
