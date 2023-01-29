@@ -149,7 +149,7 @@ impl CliqueStage {
                     .expect("CliqueStage solana_keypair is ed25519 compatible");
                 let local_key = identity::Keypair::Ed25519(secret_key.into());
                 let local_peer_id = PeerId::from(local_key.public());
-                // println!("Local peer id: {local_peer_id}");
+                debug!("identity {:?}", local_key.public());
 
                 // Set up an encrypted DNS-enabled TCP Transport over the Mplex protocol.
                 let transport = tcp::async_io::Transport::default()
@@ -217,7 +217,7 @@ impl CliqueStage {
                 for peer in bootstrap_peers.iter() {
                     let addr = socket_addr_to_multi_addr(*peer);
                     swarm.dial(addr.clone()).expect("dial succeeds");
-                    info!("dial peer {peer:?} {addr:?}");
+                    debug!("dial peer: {peer:?} {addr:?}");
                 }
 
                 // Listen on all interfaces
@@ -241,10 +241,11 @@ impl CliqueStage {
                             boot_slot, current_slot, shred_inbound: gossip_shred_inbound
                         };
 
+                        debug!("publish: {message:?}");
                         if let Err(e) = swarm
                             .behaviour_mut().gossipsub
                             .publish(topic.clone(), bincode::serialize(&CliqueGossipMessage::Heartbeat(message)).unwrap()) {
-                            info!("CliqueStage Publish error: {e:?}");
+                            debug!("publish error: {e:?}");
                         }
 
                         last_heartbeat = Instant::now();    
@@ -253,10 +254,10 @@ impl CliqueStage {
                     if let Poll::Ready(Some(inbound)) = swarm.poll_next(&mut cx) {
                         match inbound {
                             SwarmEvent::NewListenAddr { address, .. } => {
-                                info!("CliqueStage listening on {address:?}");
+                                debug!("listen on {address:?}");
                             }
                             SwarmEvent::Behaviour(SolanaCliqueBehaviourEvent::Identify(event)) => {
-                                debug!("CliqueStage identify: {event:?}");
+                                debug!("identify: {event:?}");
                             }
                             SwarmEvent::Behaviour(SolanaCliqueBehaviourEvent::Gossipsub(event)) => {
                                 match event {
@@ -267,7 +268,7 @@ impl CliqueStage {
                                     } => {
                                         if let Ok(message) = bincode::deserialize::<CliqueGossipMessage>(&message.data.as_slice()) {
                                             let peer_pk = peer_id_to_solana_pubkey(propagation_source);
-                                            trace!("CliqueStage inbound gossipsub peer={} id={:?} message={:?}", peer_pk.to_string(), message_id, message);
+                                            debug!("gossipsub: inbound peer={} id={:?} message={:?}", peer_pk.to_string(), message_id, message);
 
                                             match message {
                                                 CliqueGossipMessage::Heartbeat(message) => {
@@ -278,15 +279,15 @@ impl CliqueStage {
                                     }
                                     gossipsub::GossipsubEvent::Subscribed { peer_id, topic } => {
                                         let peer_pk = peer_id_to_solana_pubkey(peer_id);
-                                        info!("CliqueStage gossipsub peer={} subscribed topic={}", peer_pk, topic)
+                                        debug!("gossipsub: peer={} subscribed topic={}", peer_pk, topic)
                                     }
                                     gossipsub::GossipsubEvent::Unsubscribed { peer_id, topic } => {
                                         let peer_pk = peer_id_to_solana_pubkey(peer_id);
-                                        info!("CliqueStage gossipsub peer={} unsubscribed topic={}", peer_pk, topic)
+                                        debug!("gossipsub: peer={} unsubscribed topic={}", peer_pk, topic)
                                     }
                                     gossipsub::GossipsubEvent::GossipsubNotSupported { peer_id } => {
                                         let peer_pk = peer_id_to_solana_pubkey(peer_id);
-                                        info!("CliqueStage gossipsub peer={} unsupported", peer_pk)
+                                        debug!("gossipsub: peer={} unsupported", peer_pk)
                                     }
                                 }
                             }
@@ -298,7 +299,7 @@ impl CliqueStage {
                                         result: Result::Ok(ping::Success::Ping { rtt }),
                                     } => {
                                         debug!(
-                                            "CliqueStage ping: rtt to {} is {} ms",
+                                            "ping: rtt to {} is {} ms",
                                             peer.to_base58(),
                                             rtt.as_millis()
                                         );
@@ -307,20 +308,20 @@ impl CliqueStage {
                                         peer,
                                         result: Result::Ok(ping::Success::Pong),
                                     } => {
-                                        debug!("CliqueStage ping: pong from {}", peer.to_base58());
+                                        debug!("ping: pong from {}", peer.to_base58());
                                     }
                                     ping::Event {
                                         peer,
                                         result: Result::Err(ping::Failure::Timeout),
                                     } => {
-                                        debug!("CliqueStage ping: timeout to {}", peer.to_base58());
+                                        debug!("ping: timeout to {}", peer.to_base58());
                                     }
                                     ping::Event {
                                         peer,
                                         result: Result::Err(ping::Failure::Unsupported),
                                     } => {
                                         debug!(
-                                            "CliqueStage ping: {} does not support ping protocol",
+                                            "ping: {} does not support ping protocol",
                                             peer.to_base58()
                                         );
                                     }
@@ -329,7 +330,7 @@ impl CliqueStage {
                                         result: Result::Err(ping::Failure::Other { error }),
                                     } => {
                                         debug!(
-                                            "CliqueStage ping: ping::Failure with {}: {error}",
+                                            "ping: failure with {}: {error}",
                                             peer.to_base58()
                                         );
                                     }

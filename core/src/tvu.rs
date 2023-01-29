@@ -178,8 +178,8 @@ impl Tvu {
             turbine_disabled,
         );
 
-        let clique_bank_forks = bank_forks.clone();
-        let slot_query = move || clique_bank_forks.read().unwrap().highest_slot();
+        let clique_blockstore = blockstore.clone();
+        let slot_query = move || clique_blockstore.highest_slot().unwrap_or(None).unwrap_or_default();
         let clique_stage = clique_addr.map( |clique_addr|
             CliqueStage::new(
                 clique_addr,
