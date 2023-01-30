@@ -185,7 +185,7 @@ impl ClusterNodes<CliqueStage> {
             neighbors,
             children,
             addrs,
-            frwds,
+            frwds: _
         } = self.get_retransmit_peers(shred, fanout);
 
         // Neigbors can include duplicates

@@ -3,7 +3,6 @@ use std::{
     convert::TryFrom,
     hash::{Hash, Hasher},
     net::{UdpSocket, SocketAddr},
-    str::FromStr,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, RwLock,
@@ -21,7 +20,6 @@ use libp2p::{
     core, gossipsub, identify, identity, noise, ping, swarm::NetworkBehaviour, swarm::SwarmEvent,
     tcp, yamux, Multiaddr, PeerId, Swarm, Transport, multiaddr::Protocol,
 };
-use log::info;
 use lru::LruCache;
 use rayon::{ThreadPoolBuilder, prelude::{IntoParallelIterator, ParallelIterator}};
 use solana_gossip::legacy_contact_info::LegacyContactInfo;
