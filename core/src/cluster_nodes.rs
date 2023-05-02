@@ -58,7 +58,7 @@ pub struct Node {
     stake: u64,
 }
 
-pub struct ClusterNodes<T> {
+pub struct ClusterNodes {
     pubkey: Pubkey, // The local node itself.
     // All staked nodes + other known tvu-peers + the node itself;
     // sorted by (stake, pubkey) in descending order.
@@ -66,15 +66,14 @@ pub struct ClusterNodes<T> {
     // Reverse index from nodes pubkey to their index in self.nodes.
     index: HashMap<Pubkey, /*index:*/ usize>,
     weighted_shuffle: WeightedShuffle</*stake:*/ u64>,
-    _phantom: PhantomData<T>,
 }
 
-type CacheEntry<T> = Option<(/*as of:*/ Instant, Arc<ClusterNodes<T>>)>;
+type CacheEntry = Option<(/*as of:*/ Instant, Arc<ClusterNodes>)>;
 
 pub struct ClusterNodesCache<T> {
     // Cache entries are wrapped in Arc<Mutex<...>>, so that, when needed, only
     // one thread does the computations to update the entry for the epoch.
-    cache: Mutex<LruCache<Epoch, Arc<Mutex<CacheEntry<T>>>>>,
+    cache: Mutex<LruCache<Epoch, Arc<Mutex<CacheEntry>>>>,
     ttl: Duration, // Time to live.
 }
 
@@ -106,7 +105,7 @@ impl Node {
     }
 }
 
-impl<T> ClusterNodes<T> {
+impl ClusterNodes {
     pub(crate) fn submit_metrics(&self, name: &'static str, now: u64) {
         let mut epoch_stakes = 0;
         let mut num_nodes_dead = 0;
@@ -304,7 +303,7 @@ impl ClusterNodes<RetransmitStage> {
 pub fn new_cluster_nodes<T: 'static>(
     cluster_info: &ClusterInfo,
     stakes: &HashMap<Pubkey, u64>,
-) -> ClusterNodes<T> {
+) -> ClusterNodes {
     let self_pubkey = cluster_info.id();
     let nodes = get_nodes(cluster_info, stakes);
     let index: HashMap<_, _> = nodes
@@ -316,6 +315,7 @@ pub fn new_cluster_nodes<T: 'static>(
     let stakes: Vec<u64> = nodes.iter().map(|node| node.stake).collect();
     let mut weighted_shuffle = WeightedShuffle::new("cluster-nodes", &stakes);
     if broadcast {
+
         weighted_shuffle.remove_index(index[&self_pubkey]);
     }
     ClusterNodes {
@@ -323,7 +323,6 @@ pub fn new_cluster_nodes<T: 'static>(
         nodes,
         index,
         weighted_shuffle,
-        _phantom: PhantomData,
     }
 }
 
@@ -409,7 +408,7 @@ impl<T> ClusterNodesCache<T> {
 }
 
 impl<T: 'static> ClusterNodesCache<T> {
-    fn get_cache_entry(&self, epoch: Epoch) -> Arc<Mutex<CacheEntry<T>>> {
+    fn get_cache_entry(&self, epoch: Epoch) -> Arc<Mutex<CacheEntry>> {
         let mut cache = self.cache.lock().unwrap();
         match cache.get(&epoch) {
             Some(entry) => Arc::clone(entry),
@@ -427,7 +426,7 @@ impl<T: 'static> ClusterNodesCache<T> {
         root_bank: &Bank,
         working_bank: &Bank,
         cluster_info: &ClusterInfo,
-    ) -> Arc<ClusterNodes<T>> {
+    ) -> Arc<ClusterNodes> {
         let epoch = root_bank.get_leader_schedule_epoch(shred_slot);
         let entry = self.get_cache_entry(epoch);
         // Hold the lock on the entry here so that, if needed, only
@@ -736,4 +735,18 @@ mod tests {
             assert_eq!(retransmit_peers.next(), None);
         }
     }
+
+    #[test]
+    fn test_broadcast_node_not_shuffled() {
+        let mut rng = rand::thread_rng();
+        let (_, stakes, cluster_info) = make_test_cluster(&mut rng, 1_000, None);
+        let retransmit_cluster_nodes = new_cluster_nodes::<RetransmitStage>(&cluster_info, &stakes);
+        let broadcast_cluster_nodes = new_cluster_nodes::<BroadcastStage>(&cluster_info, &stakes);
+        // absolute value does not matter
+        assert_ne!(
+            broadcast_cluster_nodes.weighted_shuffle.sum_weights(),
+            retransmit_cluster_nodes.weighted_shuffle.sum_weights());
+
+    }
+
 }
