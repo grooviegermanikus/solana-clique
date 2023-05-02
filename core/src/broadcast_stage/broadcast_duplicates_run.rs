@@ -33,7 +33,7 @@ pub(super) struct BroadcastDuplicatesRun {
     recent_blockhash: Option<Hash>,
     prev_entry_hash: Option<Hash>,
     num_slots_broadcasted: usize,
-    cluster_nodes_cache: Arc<ClusterNodesCache<BroadcastStage>>,
+    cluster_nodes_cache: Arc<ClusterNodesCache>,
     original_last_data_shreds: Arc<Mutex<HashSet<Signature>>>,
     partition_last_data_shreds: Arc<Mutex<HashSet<Signature>>>,
     reed_solomon_cache: Arc<ReedSolomonCache>,

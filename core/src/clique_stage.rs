@@ -466,7 +466,7 @@ impl CliqueStage {
 fn retransmit_shred(
     key: &ShredId,
     shred: &[u8],
-    cluster_nodes: &ClusterNodes<CliqueStage>,
+    cluster_nodes: &ClusterNodes,
     socket_addr_space: &SocketAddrSpace,
     socket: &UdpSocket,
 ) -> (/*root_distance:*/ usize, /*num_nodes:*/ usize, /*num_failed*/ usize) {

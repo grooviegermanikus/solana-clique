@@ -54,7 +54,7 @@ pub struct Node {
     stake: u64,
 }
 
-pub struct ClusterNodes<T> {
+pub struct ClusterNodes {
     pubkey: Pubkey, // The local node itself.
     // All staked nodes + other known tvu-peers + the node itself;
     // sorted by (stake, pubkey) in descending order.
@@ -62,15 +62,15 @@ pub struct ClusterNodes<T> {
     // Reverse index from nodes pubkey to their index in self.nodes.
     index: HashMap<Pubkey, /*index:*/ usize>,
     weighted_shuffle: WeightedShuffle</*stake:*/ u64>,
-    _phantom: PhantomData<T>,
+    // _phantom: PhantomData<T>,
 }
 
-type CacheEntry<T> = Option<(/*as of:*/ Instant, Arc<ClusterNodes<T>>)>;
+type CacheEntry = Option<(/*as of:*/ Instant, Arc<ClusterNodes>)>;
 
-pub struct ClusterNodesCache<T> {
+pub struct ClusterNodesCache {
     // Cache entries are wrapped in Arc<Mutex<...>>, so that, when needed, only
     // one thread does the computations to update the entry for the epoch.
-    cache: Mutex<LruCache<Epoch, Arc<Mutex<CacheEntry<T>>>>>,
+    cache: Mutex<LruCache<Epoch, Arc<Mutex<CacheEntry>>>>,
     ttl: Duration, // Time to live.
 }
 
@@ -102,7 +102,7 @@ impl Node {
     }
 }
 
-impl<T> ClusterNodes<T> {
+impl ClusterNodes {
     pub(crate) fn submit_metrics(&self, name: &'static str, now: u64) {
         let mut num_nodes_dead = 0;
         let mut num_nodes_staked = 0;
@@ -134,22 +134,34 @@ impl<T> ClusterNodes<T> {
     }
 }
 
-impl ClusterNodes<BroadcastStage> {
-    pub fn new(cluster_info: &ClusterInfo, stakes: &HashMap<Pubkey, u64>) -> Self {
-        let nodes = collect_stake_sorted_nodes(cluster_info, stakes);
-        new_cluster_nodes(cluster_info.id(), nodes)
-    }
-
-    pub(crate) fn get_broadcast_peer(&self, shred: &ShredId) -> Option<&ContactInfo> {
-        let shred_seed = shred.seed(&self.pubkey);
-        let mut rng = ChaChaRng::from_seed(shred_seed);
-        let index = self.weighted_shuffle.first(&mut rng)?;
-        self.nodes[index].contact_info()
-    }
+pub fn new_broadcaststage(cluster_info: &ClusterInfo, stakes: &HashMap<Pubkey, u64>) -> ClusterNodes {
+    let nodes = collect_stake_sorted_nodes(cluster_info, stakes);
+    new_cluster_nodes(cluster_info.id(), nodes)
 }
 
-impl ClusterNodes<CliqueStage> {
-    pub fn new(self_pubkey: Pubkey, clique_nodes: &Vec<(Pubkey, SocketAddr)>) -> Self {
+pub(crate) fn get_broadcast_peer(cluster_nodes: &ClusterNodes, shred: &ShredId) -> Option<&ContactInfo> {
+    let shred_seed = shred.seed(&cluster_nodes.pubkey);
+    let mut rng = ChaChaRng::from_seed(shred_seed);
+    let index = cluster_nodes.weighted_shuffle.first(&mut rng)?;
+    cluster_nodes.nodes[index].contact_info()
+}
+
+// impl ClusterNodes/*<BroadcastStage>*/ {
+    // pub fn new(cluster_info: &ClusterInfo, stakes: &HashMap<Pubkey, u64>) -> Self {
+    //     let nodes = collect_stake_sorted_nodes(cluster_info, stakes);
+    //     new_cluster_nodes(cluster_info.id(), nodes)
+    // }
+
+    // pub(crate) fn get_broadcast_peer(&self, shred: &ShredId) -> Option<&ContactInfo> {
+    //     let shred_seed = shred.seed(&self.pubkey);
+    //     let mut rng = ChaChaRng::from_seed(shred_seed);
+    //     let index = self.weighted_shuffle.first(&mut rng)?;
+    //     self.nodes[index].contact_info()
+    // }
+// }
+
+// impl ClusterNodes<CliqueStage> {
+    pub fn new_cliquestage(self_pubkey: Pubkey, clique_nodes: &Vec<(Pubkey, SocketAddr)>) -> ClusterNodes {
         // all nodes in clique have the same stake weight
         let stake = 1;
 
@@ -175,8 +187,8 @@ impl ClusterNodes<CliqueStage> {
         new_cluster_nodes(self_pubkey, nodes)
     }
 
-    pub(crate) fn get_retransmit_addrs(
-        &self,
+    pub fn get_retransmit_addrs_clique(
+        cluster_nodes: &ClusterNodes,
         shred: &ShredId,
         fanout: usize,
     ) -> (/*root_distance:*/ usize, Vec<SocketAddr>) {
@@ -186,7 +198,7 @@ impl ClusterNodes<CliqueStage> {
             children,
             addrs,
             frwds: _
-        } = self.get_retransmit_peers(shred, fanout);
+        } = cluster_nodes.get_retransmit_peers(shred, fanout);
 
         // Neigbors can include duplicates
         let peers = neighbors
@@ -207,16 +219,16 @@ impl ClusterNodes<CliqueStage> {
     // all neighbour and parent-child links are bi-directional
     // RetransmitPeers.neighbors contains neigbor <-> neigbor and child->parent 
     // RetransmitPeers.children contains parent -> child
-    pub fn get_retransmit_peers(&self, shred: &ShredId, fanout: usize) -> RetransmitPeers {
+    pub fn get_retransmit_peers_clique(cluster_nodes: &ClusterNodes, shred: &ShredId, fanout: usize) -> RetransmitPeers {
         let shred_seed = shred.seed(&Pubkey::default());
-        let weighted_shuffle = self.weighted_shuffle.clone();
+        let weighted_shuffle = cluster_nodes.weighted_shuffle.clone();
 
-        let mut addrs = HashMap::<SocketAddr, Pubkey>::with_capacity(self.nodes.len());
+        let mut addrs = HashMap::<SocketAddr, Pubkey>::with_capacity(cluster_nodes.nodes.len());
         let frwds = Default::default();
         let mut rng = ChaChaRng::from_seed(shred_seed);
         let nodes: Vec<_> = weighted_shuffle
             .shuffle(&mut rng)
-            .map(|index| &self.nodes[index])
+            .map(|index| &cluster_nodes.nodes[index])
             .inspect(|node| {
                 if let Some(node) = node.contact_info() {
                     addrs.entry(node.tvu).or_insert(node.id);
@@ -236,7 +248,7 @@ impl ClusterNodes<CliqueStage> {
 
         let self_index = nodes
             .iter()
-            .position(|node| node.pubkey() == self.pubkey)
+            .position(|node| node.pubkey() == cluster_nodes.pubkey)
             .unwrap();
 
         // children can lie outside of the array range, but skip & take handle that case
@@ -287,16 +299,16 @@ impl ClusterNodes<CliqueStage> {
             frwds,
         }
     }
-}
+// }
 
-impl ClusterNodes<RetransmitStage> {
-    pub fn new(cluster_info: &ClusterInfo, stakes: &HashMap<Pubkey, u64>) -> Self {
+// impl ClusterNodes<RetransmitStage> {
+    pub fn new_retransmitstage(cluster_info: &ClusterInfo, stakes: &HashMap<Pubkey, u64>) -> Self {
         let nodes = collect_stake_sorted_nodes(cluster_info, stakes);
         new_cluster_nodes(cluster_info.id(), nodes)
     }
     
-    pub(crate) fn get_retransmit_addrs(
-        &self,
+    pub fn get_retransmit_addrs(
+        cluster_nodes: &ClusterNodes,
         slot_leader: &Pubkey,
         shred: &ShredId,
         root_bank: &Bank,
@@ -308,7 +320,7 @@ impl ClusterNodes<RetransmitStage> {
             children,
             addrs,
             frwds,
-        } = self.get_retransmit_peers(slot_leader, shred, root_bank, fanout);
+        } = cluster_nodes.get_retransmit_peers(slot_leader, shred, root_bank, fanout);
         if neighbors.is_empty() {
             let peers = children
                 .into_iter()
@@ -322,7 +334,7 @@ impl ClusterNodes<RetransmitStage> {
         // neighborhood), it should send the packet to tvu socket of its
         // children and also tvu_forward socket of its neighbors. Otherwise it
         // should only forward to tvu_forwards socket of its children.
-        if neighbors[0].pubkey() != self.pubkey {
+        if neighbors[0].pubkey() != cluster_nodes.pubkey {
             let peers = children
                 .into_iter()
                 .filter_map(Node::contact_info)
@@ -347,27 +359,27 @@ impl ClusterNodes<RetransmitStage> {
     }
 
     pub fn get_retransmit_peers(
-        &self,
+        cluster_nodes: &ClusterNodes,
         slot_leader: &Pubkey,
         shred: &ShredId,
         root_bank: &Bank,
         fanout: usize,
     ) -> RetransmitPeers {
         let shred_seed = shred.seed(slot_leader);
-        let mut weighted_shuffle = self.weighted_shuffle.clone();
+        let mut weighted_shuffle = cluster_nodes.weighted_shuffle.clone();
         // Exclude slot leader from list of nodes.
-        if slot_leader == &self.pubkey {
+        if slot_leader == &cluster_nodes.pubkey {
             error!("retransmit from slot leader: {}", slot_leader);
-        } else if let Some(index) = self.index.get(slot_leader) {
+        } else if let Some(index) = cluster_nodes.index.get(slot_leader) {
             weighted_shuffle.remove_index(*index);
         };
-        let mut addrs = HashMap::<SocketAddr, Pubkey>::with_capacity(self.nodes.len());
-        let mut frwds = HashMap::<SocketAddr, Pubkey>::with_capacity(self.nodes.len());
+        let mut addrs = HashMap::<SocketAddr, Pubkey>::with_capacity(cluster_nodes.nodes.len());
+        let mut frwds = HashMap::<SocketAddr, Pubkey>::with_capacity(cluster_nodes.nodes.len());
         let mut rng = ChaChaRng::from_seed(shred_seed);
         let drop_redundant_turbine_path = drop_redundant_turbine_path(shred.slot(), root_bank);
         let nodes: Vec<_> = weighted_shuffle
             .shuffle(&mut rng)
-            .map(|index| &self.nodes[index])
+            .map(|index| &cluster_nodes.nodes[index])
             .inspect(|node| {
                 if let Some(node) = node.contact_info() {
                     addrs.entry(node.tvu).or_insert(node.id);
@@ -379,7 +391,7 @@ impl ClusterNodes<RetransmitStage> {
             .collect();
         let self_index = nodes
             .iter()
-            .position(|node| node.pubkey() == self.pubkey)
+            .position(|node| node.pubkey() == cluster_nodes.pubkey)
             .unwrap();
         if drop_redundant_turbine_path {
             let root_distance = if self_index == 0 {
@@ -391,7 +403,7 @@ impl ClusterNodes<RetransmitStage> {
             } else {
                 3 // If changed, update MAX_NUM_TURBINE_HOPS.
             };
-            let peers = get_retransmit_peers(fanout, self_index, &nodes);
+            let peers = get_retransmit_peers_loc(fanout, self_index, &nodes);
             return RetransmitPeers {
                 root_distance,
                 neighbors: Vec::default(),
@@ -412,7 +424,7 @@ impl ClusterNodes<RetransmitStage> {
         let (neighbors, children) = compute_retransmit_peers(fanout, self_index, &nodes);
         // Assert that the node itself is included in the set of neighbors, at
         // the right offset.
-        debug_assert_eq!(neighbors[self_index % fanout].pubkey(), self.pubkey);
+        debug_assert_eq!(neighbors[self_index % fanout].pubkey(), cluster_nodes.pubkey);
         RetransmitPeers {
             root_distance,
             neighbors,
@@ -421,15 +433,16 @@ impl ClusterNodes<RetransmitStage> {
             frwds,
         }
     }
-}
+// }
 
 // nodes is expected to be sorted by (stake, pubkey) in descending order
-pub fn new_cluster_nodes<T: 'static>(self_pubkey: Pubkey, nodes: Vec<Node>) -> ClusterNodes<T> {
+pub fn new_cluster_nodes<T: 'static>(self_pubkey: Pubkey, nodes: Vec<Node>) -> ClusterNodes {
     let index: HashMap<_, _> = nodes
         .iter()
         .enumerate()
         .map(|(ix, node)| (node.pubkey(), ix))
         .collect();
+    // FIXME
     let broadcast = TypeId::of::<T>() == TypeId::of::<BroadcastStage>();
     let stakes: Vec<u64> = nodes.iter().map(|node| node.stake).collect();
     let mut weighted_shuffle = WeightedShuffle::new("cluster-nodes", &stakes);
@@ -441,7 +454,7 @@ pub fn new_cluster_nodes<T: 'static>(self_pubkey: Pubkey, nodes: Vec<Node>) -> C
         nodes,
         index,
         weighted_shuffle,
-        _phantom: PhantomData::default(),
+        // _phantom: PhantomData::default(),
     }
 }
 
@@ -495,7 +508,7 @@ fn collect_stake_sorted_nodes(
 // Each other node retransmits shreds to fanout many nodes in the next layer.
 // For example the node k in the 1st layer will retransmit to nodes:
 // fanout + k, 2*fanout + k, ..., fanout*fanout + k
-fn get_retransmit_peers<T: Copy>(
+fn get_retransmit_peers_loc<T:Copy>(
     fanout: usize,
     index: usize, // Local node's index withing the nodes slice.
     nodes: &[T],
@@ -513,7 +526,7 @@ fn get_retransmit_peers<T: Copy>(
         .copied()
 }
 
-impl<T> ClusterNodesCache<T> {
+impl ClusterNodesCache {
     pub fn new(
         // Capacity of underlying LRU-cache in terms of number of epochs.
         cap: usize,
@@ -528,8 +541,8 @@ impl<T> ClusterNodesCache<T> {
     }
 }
 
-impl<T: 'static> ClusterNodesCache<T> {
-    fn get_cache_entry(&self, epoch: Epoch) -> Arc<Mutex<CacheEntry<T>>> {
+impl ClusterNodesCache {
+    fn get_cache_entry(&self, epoch: Epoch) -> Arc<Mutex<CacheEntry>> {
         let mut cache = self.cache.lock().unwrap();
         match cache.get(&epoch) {
             Some(entry) => Arc::clone(entry),
@@ -547,7 +560,7 @@ impl<T: 'static> ClusterNodesCache<T> {
         root_bank: &Bank,
         working_bank: &Bank,
         cluster_info: &ClusterInfo,
-    ) -> Arc<ClusterNodes<T>> {
+    ) -> Arc<ClusterNodes> {
         let epoch = root_bank.get_leader_schedule_epoch(shred_slot);
         let entry = self.get_cache_entry(epoch);
         // Hold the lock on the entry here so that, if needed, only
@@ -699,7 +712,7 @@ mod tests {
         let (nodes, stakes, cluster_info) = make_test_cluster(&mut rng, 1_000, None);
         // ClusterInfo::tvu_peers excludes the node itself.
         assert_eq!(cluster_info.tvu_peers().len(), nodes.len() - 1);
-        let cluster_nodes = ClusterNodes::<RetransmitStage>::new(&cluster_info, &stakes);
+        let cluster_nodes = new_retransmitstage(&cluster_info, &stakes);
         // All nodes with contact-info should be in the index.
         // Staked nodes with no contact-info should be included.
         assert!(cluster_nodes.nodes.len() > nodes.len());
@@ -728,7 +741,7 @@ mod tests {
         let (nodes, stakes, cluster_info) = make_test_cluster(&mut rng, 1_000, None);
         // ClusterInfo::tvu_peers excludes the node itself.
         assert_eq!(cluster_info.tvu_peers().len(), nodes.len() - 1);
-        let cluster_nodes = ClusterNodes::<BroadcastStage>::new(&cluster_info, &stakes);
+        let cluster_nodes = new_broadcaststage(&cluster_info, &stakes);
         // All nodes with contact-info should be in the index.
         // Excluding this node itself.
         // Staked nodes with no contact-info should be included.
@@ -784,11 +797,11 @@ mod tests {
             vec![8],
         ];
         for (k, peers) in peers.into_iter().enumerate() {
-            let retransmit_peers = get_retransmit_peers(/*fanout:*/ 2, k, &index);
+            let retransmit_peers = get_retransmit_peers_loc(/*fanout:*/ 2, k, &index);
             assert_eq!(retransmit_peers.collect::<Vec<_>>(), peers);
         }
         for k in 10..=index.len() {
-            let mut retransmit_peers = get_retransmit_peers(/*fanout:*/ 2, k, &index);
+            let mut retransmit_peers = get_retransmit_peers_loc(/*fanout:*/ 2, k, &index);
             assert_eq!(retransmit_peers.next(), None);
         }
         // fanout 3
@@ -825,28 +838,28 @@ mod tests {
             vec![34],
         ];
         for (k, peers) in peers.into_iter().enumerate() {
-            let retransmit_peers = get_retransmit_peers(/*fanout:*/ 3, k, &index);
+            let retransmit_peers = get_retransmit_peers_loc(/*fanout:*/ 3, k, &index);
             assert_eq!(retransmit_peers.collect::<Vec<_>>(), peers);
         }
         for k in 13..=index.len() {
-            let mut retransmit_peers = get_retransmit_peers(/*fanout:*/ 3, k, &index);
+            let mut retransmit_peers = get_retransmit_peers_loc(/*fanout:*/ 3, k, &index);
             assert_eq!(retransmit_peers.next(), None);
         }
     }
 
 
-    fn generate_cluster_nodes(num: usize) -> Vec<ClusterNodes<CliqueStage>> {
+    fn generate_cluster_nodes(num: usize) -> Vec<ClusterNodes> {
         let keys: Vec<Pubkey> = (0..num).map(|i| Pubkey::find_program_address(&[&[(i / 256) as u8, (i % 256) as u8]], &Pubkey::default()).0).collect();
         let addrs: Vec<SocketAddr> = (0..num).map(|i| format!("1.2.3.4:{}", 13000+i).parse().unwrap()).collect();
         let clique = (0..num).map(|i| (keys[i], addrs[i])).collect();
-        return (0..num).map(|i| ClusterNodes::<CliqueStage>::new(keys[i], &clique)).collect();
+        return (0..num).map(|i| new_cliquestage(keys[i], &clique)).collect();
     }
 
     #[test]
     fn test_get_clique_peers_solo() {
         let single_node_cluster = generate_cluster_nodes(1);
         let shred_id = get_shred_id(&(0..83).collect::<Vec<u8>>().as_slice()).unwrap();
-        let peers = single_node_cluster[0].get_retransmit_peers(&shred_id, 2);
+        let peers = single_node_cluster[0].get_retransmit_peers_loc(&shred_id, 2);
         assert_eq!(peers.root_distance, 1);
         assert_eq!(peers.neighbors.len(), 0);
         assert_eq!(peers.children.len(), 0);

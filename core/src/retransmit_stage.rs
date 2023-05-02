@@ -82,7 +82,7 @@ impl RetransmitStats {
         root_bank: &Bank,
         working_bank: &Bank,
         cluster_info: &ClusterInfo,
-        cluster_nodes_cache: &ClusterNodesCache<RetransmitStage>,
+        cluster_nodes_cache: &ClusterNodesCache,
     ) {
         const SUBMIT_CADENCE: Duration = Duration::from_secs(2);
         if self.since.elapsed() < SUBMIT_CADENCE {
@@ -171,7 +171,7 @@ fn retransmit(
     shreds_receiver: &Receiver<Vec</*shred:*/ Vec<u8>>>,
     sockets: &[UdpSocket],
     stats: &mut RetransmitStats,
-    cluster_nodes_cache: &ClusterNodesCache<RetransmitStage>,
+    cluster_nodes_cache: &ClusterNodesCache,
     hasher_reset_ts: &mut Instant,
     shreds_received: &mut ShredFilter,
     packet_hasher: &mut PacketHasher,
@@ -293,7 +293,7 @@ fn retransmit_shred(
     shred: &[u8],
     slot_leader: &Pubkey,
     root_bank: &Bank,
-    cluster_nodes: &ClusterNodes<RetransmitStage>,
+    cluster_nodes: &ClusterNodes,
     socket_addr_space: &SocketAddrSpace,
     socket: &UdpSocket,
     stats: &RetransmitStats,

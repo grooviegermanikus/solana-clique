@@ -29,13 +29,13 @@ pub struct StandardBroadcastRun {
     shred_version: u16,
     last_datapoint_submit: Arc<AtomicInterval>,
     num_batches: usize,
-    cluster_nodes_cache: Arc<ClusterNodesCache<BroadcastStage>>,
+    cluster_nodes_cache: Arc<ClusterNodesCache>,
     reed_solomon_cache: Arc<ReedSolomonCache>,
 }
 
 impl StandardBroadcastRun {
     pub(super) fn new(shred_version: u16) -> Self {
-        let cluster_nodes_cache = Arc::new(ClusterNodesCache::<BroadcastStage>::new(
+        let cluster_nodes_cache = Arc::new(ClusterNodesCache::new(
             CLUSTER_NODES_CACHE_NUM_EPOCH_CAP,
             CLUSTER_NODES_CACHE_TTL,
         ));

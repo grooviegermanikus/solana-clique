@@ -378,7 +378,7 @@ impl BroadcastStage {
 }
 
 fn update_peer_stats(
-    cluster_nodes: &ClusterNodes<BroadcastStage>,
+    cluster_nodes: &ClusterNodes
     last_datapoint_submit: &AtomicInterval,
 ) {
     if last_datapoint_submit.should_update(1000) {
@@ -391,7 +391,7 @@ fn update_peer_stats(
 pub fn broadcast_shreds(
     s: &UdpSocket,
     shreds: &[Shred],
-    cluster_nodes_cache: &ClusterNodesCache<BroadcastStage>,
+    cluster_nodes_cache: &ClusterNodesCache,
     last_datapoint_submit: &AtomicInterval,
     transmit_stats: &mut TransmitShredsStats,
     cluster_info: &ClusterInfo,

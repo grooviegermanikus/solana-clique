@@ -16,13 +16,13 @@ pub(super) struct FailEntryVerificationBroadcastRun {
     current_slot: Slot,
     next_shred_index: u32,
     next_code_index: u32,
-    cluster_nodes_cache: Arc<ClusterNodesCache<BroadcastStage>>,
+    cluster_nodes_cache: Arc<ClusterNodesCache>,
     reed_solomon_cache: Arc<ReedSolomonCache>,
 }
 
 impl FailEntryVerificationBroadcastRun {
     pub(super) fn new(shred_version: u16) -> Self {
-        let cluster_nodes_cache = Arc::new(ClusterNodesCache::<BroadcastStage>::new(
+        let cluster_nodes_cache = Arc::new(ClusterNodesCache::new(
             CLUSTER_NODES_CACHE_NUM_EPOCH_CAP,
             CLUSTER_NODES_CACHE_TTL,
         ));
