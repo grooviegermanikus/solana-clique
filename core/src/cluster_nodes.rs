@@ -315,7 +315,7 @@ pub fn new_cluster_nodes<T: 'static>(
     let stakes: Vec<u64> = nodes.iter().map(|node| node.stake).collect();
     let mut weighted_shuffle = WeightedShuffle::new("cluster-nodes", &stakes);
     if broadcast {
-
+        // TODO see test_broadcast_node_not_shuffled that ensures that this line makes a difference
         weighted_shuffle.remove_index(index[&self_pubkey]);
     }
     ClusterNodes {
@@ -742,6 +742,7 @@ mod tests {
         let (_, stakes, cluster_info) = make_test_cluster(&mut rng, 1_000, None);
         let retransmit_cluster_nodes = new_cluster_nodes::<RetransmitStage>(&cluster_info, &stakes);
         let broadcast_cluster_nodes = new_cluster_nodes::<BroadcastStage>(&cluster_info, &stakes);
+        // !!! let broadcast = TypeId::of::<T>() == TypeId::of::<BroadcastStage>();
         // absolute value does not matter
         assert_ne!(
             broadcast_cluster_nodes.weighted_shuffle.sum_weights(),

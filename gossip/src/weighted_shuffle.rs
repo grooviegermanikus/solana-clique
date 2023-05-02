@@ -131,6 +131,12 @@ where
             self.zeros.remove(index);
         }
     }
+
+    // test only
+    pub fn sum_weights(&self) -> T {
+        self.sum
+    }
+
 }
 
 impl<T> WeightedShuffle<T>
