@@ -6,6 +6,7 @@ use {
         signature::Signer, sysvar::Sysvar, transaction::Transaction,
     },
 };
+use solana_sdk::sysvar::last_restart_slot::LastRestartSlot;
 
 // Process instruction to invoke into another program
 fn sysvar_getter_process_instruction(
@@ -23,6 +24,9 @@ fn sysvar_getter_process_instruction(
 
     let rent = Rent::get()?;
     assert_eq!(rent, Rent::default());
+
+    let last_restart_slot = LastRestartSlot::get()?;
+    assert_eq!(last_restart_slot, LastRestartSlot::default());
 
     Ok(())
 }

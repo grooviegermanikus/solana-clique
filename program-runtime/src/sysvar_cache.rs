@@ -73,16 +73,16 @@ impl SysvarCache {
         self.rent.clone().ok_or(InstructionError::UnsupportedSysvar)
     }
 
-    pub fn set_last_restart_slot(&mut self) {
-        self.last_restart_slot = Some(Arc::new(LastRestartSlot::default()));
-    }
-
-    pub fn get_last_restart_slot(&self) -> Result<Arc<Rent>, InstructionError> {
-        self.rent.clone().ok_or(InstructionError::UnsupportedSysvar)
-    }
-
     pub fn set_rent(&mut self, rent: Rent) {
         self.rent = Some(Arc::new(rent));
+    }
+
+    pub fn get_last_restart_slot(&self) -> Result<Arc<LastRestartSlot>, InstructionError> {
+        self.last_restart_slot.clone().ok_or(InstructionError::UnsupportedSysvar)
+    }
+
+    pub fn set_last_restart_slot(&mut self, last_restart_slot: LastRestartSlot) {
+        self.last_restart_slot = Some(Arc::new(last_restart_slot));
     }
 
     pub fn get_slot_hashes(&self) -> Result<Arc<SlotHashes>, InstructionError> {
@@ -171,6 +171,13 @@ impl SysvarCache {
             get_account_data(&StakeHistory::id(), &mut |data: &[u8]| {
                 if let Ok(stake_history) = bincode::deserialize(data) {
                     self.set_stake_history(stake_history);
+                }
+            });
+        }
+        if self.last_restart_slot.is_none() {
+            get_account_data(&LastRestartSlot::id(), &mut |data: &[u8]| {
+                if let Ok(last_restart_slot) = bincode::deserialize(data) {
+                    self.set_last_restart_slot(last_restart_slot);
                 }
             });
         }
@@ -266,5 +273,18 @@ pub mod get_sysvar_with_account_check {
             instruction_account_index,
         )?;
         invoke_context.get_sysvar_cache().get_stake_history()
+    }
+
+    pub fn last_restart_slot(
+        invoke_context: &InvokeContext,
+        instruction_context: &InstructionContext,
+        instruction_account_index: IndexOfAccount,
+    ) -> Result<Arc<LastRestartSlot>, InstructionError> {
+        check_sysvar_account::<LastRestartSlot>(
+            invoke_context.transaction_context,
+            instruction_context,
+            instruction_account_index,
+        )?;
+        invoke_context.get_sysvar_cache().get_last_restart_slot()
     }
 }
