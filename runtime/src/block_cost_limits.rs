@@ -5,6 +5,7 @@ use {
     solana_sdk::{
         bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, compute_budget, ed25519_program,
         feature, incinerator, native_loader, pubkey::Pubkey, secp256k1_program, system_program,
+        last_restart_slot,
     },
     std::collections::HashMap,
 };
@@ -43,6 +44,7 @@ lazy_static! {
         (ed25519_program::id(), COMPUTE_UNIT_TO_US_RATIO * 24),
         (system_program::id(), COMPUTE_UNIT_TO_US_RATIO * 5),
         (compute_budget::id(), COMPUTE_UNIT_TO_US_RATIO * 5),
+        (last_restart_slot::id(), COMPUTE_UNIT_TO_US_RATIO * 2),
         (solana_address_lookup_table_program::id(), COMPUTE_UNIT_TO_US_RATIO * 25),
         (bpf_loader_upgradeable::id(), COMPUTE_UNIT_TO_US_RATIO * 79),
         (bpf_loader_deprecated::id(), COMPUTE_UNIT_TO_US_RATIO * 38),
