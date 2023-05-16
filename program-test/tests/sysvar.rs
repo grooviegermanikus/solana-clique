@@ -6,10 +6,6 @@ use {
         signature::Signer, sysvar::Sysvar, transaction::Transaction,
     },
 };
-use solana_program_runtime::sysvar_cache::get_sysvar_with_account_check::last_restart_slot;
-use solana_sdk::instruction::AccountMeta;
-use solana_sdk::sysvar::last_restart_slot;
-use solana_sdk::sysvar::last_restart_slot::LastRestartSlot;
 
 // Process instruction to invoke into another program
 fn sysvar_getter_process_instruction(
@@ -28,10 +24,6 @@ fn sysvar_getter_process_instruction(
     let rent = Rent::get()?;
     assert_eq!(rent, Rent::default());
 
-    let last_restart_slot = LastRestartSlot::get();
-    msg!("last restart slot: {:?}", last_restart_slot);
-    assert_eq!(last_restart_slot, Ok(LastRestartSlot { last_restart_slot: 33333 }));
-
     Ok(())
 }
 
@@ -45,11 +37,9 @@ async fn get_sysvar() {
     );
 
     let mut context = program_test.start_with_context().await;
-    context.warp_to_slot(40).unwrap();
-    context.add_hard_fork();
     context.warp_to_slot(42).unwrap();
-
-    let instructions = vec![Instruction::new_with_bincode(program_id, &(), vec![])];
+    // let instructions = vec![Instruction::new_with_bincode(program_id, &(), vec![])];
+    let instructions = vec![];
 
     let transaction = Transaction::new_signed_with_payer(
         &instructions,

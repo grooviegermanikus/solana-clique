@@ -240,7 +240,7 @@ impl Accounts {
     }
 
     fn construct_last_restart_slot_account() -> AccountSharedData {
-        let data = vec![0].repeat(8);
+        let data = vec![0].repeat(8); // FIXME
         let owner = sysvar::id();
         AccountSharedData::from(Account {
             data,
@@ -333,9 +333,6 @@ impl Accounts {
                         feature_set
                             .is_active(&feature_set::instructions_sysvar_owned_by_sysvar::id()),
                     )
-                } else if solana_sdk::sysvar::last_restart_slot::check_id(key) {
-                    println!("init accout {}", key);
-                    Self::construct_last_restart_slot_account() // TODO init with slot
                 } else {
                     let (mut account, rent) = if let Some(account_override) =
                         account_overrides.and_then(|overrides| overrides.get(key))
