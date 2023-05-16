@@ -375,6 +375,13 @@ impl solana_sdk::program_stubs::SyscallStubs for SyscallStubs {
         get_sysvar(get_invoke_context().get_sysvar_cache().get_rent(), var_addr)
     }
 
+    fn sol_get_last_restart_slot_sysvar(&self, var_addr: *mut u8) -> u64 {
+        get_sysvar(
+            get_invoke_context().get_sysvar_cache().get_last_restart_slot(),
+            var_addr,
+        )
+    }
+
     fn sol_get_return_data(&self) -> Option<(Pubkey, Vec<u8>)> {
         let (program_id, data) = get_invoke_context().transaction_context.get_return_data();
         Some((*program_id, data.to_vec()))

@@ -96,6 +96,7 @@ pub mod rewards;
 pub mod slot_hashes;
 pub mod slot_history;
 pub mod stake_history;
+pub mod last_restart_slot;
 
 lazy_static! {
     pub static ref ALL_IDS: Vec<Pubkey> = vec![
@@ -111,6 +112,7 @@ lazy_static! {
         slot_history::id(),
         stake_history::id(),
         instructions::id(),
+        last_restart_slot::id(),
     ];
 }
 
