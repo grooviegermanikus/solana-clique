@@ -123,6 +123,8 @@ impl SysvarCache {
         &mut self,
         mut get_account_data: F,
     ) {
+        println!("before filling: {:?}", self);
+
         if self.clock.is_none() {
             get_account_data(&Clock::id(), &mut |data: &[u8]| {
                 if let Ok(clock) = bincode::deserialize(data) {
@@ -174,6 +176,7 @@ impl SysvarCache {
                 }
             });
         }
+
         if self.last_restart_slot.is_none() {
             get_account_data(&LastRestartSlot::id(), &mut |data: &[u8]| {
                 if let Ok(last_restart_slot) = bincode::deserialize(data) {

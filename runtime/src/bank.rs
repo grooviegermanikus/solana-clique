@@ -33,6 +33,7 @@
 //! It offers a high-level API that signs transactions
 //! on behalf of the caller, and a low-level API for when they have
 //! already been signed and verified.
+use std::fs::hard_link;
 #[allow(deprecated)]
 use solana_sdk::recent_blockhashes_account;
 pub use solana_sdk::reward_type::RewardType;
@@ -327,6 +328,7 @@ pub struct BankRc {
 
 #[cfg(RUSTC_WITH_SPECIALIZATION)]
 use solana_frozen_abi::abi_example::AbiExample;
+use solana_sdk::sysvar::last_restart_slot::LastRestartSlot;
 
 #[cfg(RUSTC_WITH_SPECIALIZATION)]
 impl AbiExample for BankRc {
@@ -1418,6 +1420,7 @@ impl Bank {
         bank.update_rent();
         bank.update_epoch_schedule();
         bank.update_recent_blockhashes();
+        bank.update_last_restart_slot();
         bank.fill_missing_sysvar_cache_entries();
         bank
     }
@@ -1699,6 +1702,7 @@ impl Bank {
             new.update_stake_history(Some(parent_epoch));
             new.update_clock(Some(parent_epoch));
             new.update_fees();
+            new.update_last_restart_slot()
         });
 
         let (_, fill_sysvar_cache_time_us) = measure_us!(new.fill_missing_sysvar_cache_entries());
@@ -1805,6 +1809,7 @@ impl Bank {
         clock.epoch_start_timestamp = parent_timestamp;
         clock.unix_timestamp = parent_timestamp;
         new.update_sysvar_account(&sysvar::clock::id(), |account| {
+            println!("create sysvar account: {:?}", account);
             create_account(
                 &clock,
                 new.inherit_specially_retained_account_fields(account),
@@ -2165,6 +2170,25 @@ impl Bank {
         self.update_sysvar_account(&sysvar::clock::id(), |account| {
             create_account(
                 &clock,
+                self.inherit_specially_retained_account_fields(account),
+            )
+        });
+    }
+
+    pub fn update_last_restart_slot(&self) {
+
+        let last_restart_slot =
+            {
+                let tmp = self.hard_forks();
+                let hard_forks = tmp.read().unwrap();
+                hard_forks.iter().last().map(|(slot, _)| *slot).unwrap_or(0)
+            };
+
+        self.update_sysvar_account(&sysvar::last_restart_slot::id(), |account| {
+            create_account(
+                &LastRestartSlot {
+                    last_restart_slot
+                },
                 self.inherit_specially_retained_account_fields(account),
             )
         });
@@ -7500,6 +7524,8 @@ impl Bank {
         if new_feature_activations.contains(&feature_set::update_hashes_per_tick::id()) {
             self.apply_updated_hashes_per_tick(DEFAULT_HASHES_PER_TICK);
         }
+
+        // TODO on feature activation, set initial restart slot
     }
 
     fn apply_updated_hashes_per_tick(&mut self, hashes_per_tick: u64) {

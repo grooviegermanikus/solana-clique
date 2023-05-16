@@ -1193,4 +1193,11 @@ impl ProgramTestContext {
         self.last_blockhash = blockhash;
         Ok(blockhash)
     }
+
+    pub fn add_hard_fork(&mut self) {
+        let bank_forks = self.bank_forks.write().unwrap();
+        let hard_forks = bank_forks.working_bank().hard_forks();
+        let mut write = hard_forks.write().unwrap();
+        write.register(33333);
+    }
 }

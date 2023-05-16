@@ -239,6 +239,16 @@ impl Accounts {
         })
     }
 
+    fn construct_last_restart_slot_account() -> AccountSharedData {
+        let data = vec![0].repeat(8);
+        let owner = sysvar::id();
+        AccountSharedData::from(Account {
+            data,
+            owner,
+            ..Account::default()
+        })
+    }
+
     /// If feature `cap_transaction_accounts_data_size` is active, total accounts data a
     /// transaction can load is limited to 64MiB to not break anyone in Mainnet-beta today.
     /// (It will be set by compute_budget instruction in the future to more reasonable level).
@@ -323,6 +333,9 @@ impl Accounts {
                         feature_set
                             .is_active(&feature_set::instructions_sysvar_owned_by_sysvar::id()),
                     )
+                } else if solana_sdk::sysvar::last_restart_slot::check_id(key) {
+                    println!("init accout {}", key);
+                    Self::construct_last_restart_slot_account() // TODO init with slot
                 } else {
                     let (mut account, rent) = if let Some(account_override) =
                         account_overrides.and_then(|overrides| overrides.get(key))
@@ -1439,6 +1452,7 @@ mod tests {
         );
         for ka in ka.iter() {
             accounts.store_for_tests(0, &ka.0, &ka.1);
+            println!("store for test {} {:?}", ka.0.pubkey(), ka.1);
         }
 
         let ancestors = vec![(0, 0)].into_iter().collect();
