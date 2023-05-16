@@ -7499,7 +7499,6 @@ impl Bank {
             self.apply_updated_hashes_per_tick(DEFAULT_HASHES_PER_TICK);
         }
 
-        // TODO on feature activation, set initial restart slot
     }
 
     fn apply_updated_hashes_per_tick(&mut self, hashes_per_tick: u64) {
