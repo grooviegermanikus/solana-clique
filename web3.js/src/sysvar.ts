@@ -35,3 +35,8 @@ export const SYSVAR_SLOT_HISTORY_PUBKEY = new PublicKey(
 export const SYSVAR_STAKE_HISTORY_PUBKEY = new PublicKey(
   'SysvarStakeHistory1111111111111111111111111',
 );
+
+export const SYSVAR_LAST_RESTART_SLOT_PUBKEY = new PublicKey(
+  'SysvarLastRestartS1ot1111111111111111111111',
+);
+
