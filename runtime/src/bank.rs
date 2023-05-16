@@ -1809,7 +1809,6 @@ impl Bank {
         clock.epoch_start_timestamp = parent_timestamp;
         clock.unix_timestamp = parent_timestamp;
         new.update_sysvar_account(&sysvar::clock::id(), |account| {
-            println!("create sysvar account: {:?}", account);
             create_account(
                 &clock,
                 new.inherit_specially_retained_account_fields(account),

@@ -49,12 +49,7 @@ async fn get_sysvar() {
     context.add_hard_fork();
     context.warp_to_slot(42).unwrap();
 
-
-
-    let instructions = vec![
-        Instruction::new_with_bincode(program_id, &(),
-                                      vec![AccountMeta::new_readonly(last_restart_slot::id(), false)]),
-    ];
+    let instructions = vec![Instruction::new_with_bincode(program_id, &(), vec![])];
 
     let transaction = Transaction::new_signed_with_payer(
         &instructions,
