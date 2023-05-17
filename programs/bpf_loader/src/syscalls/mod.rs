@@ -9,6 +9,7 @@ pub use self::{
         SyscallGetRentSysvar,
     },
 };
+use crate::syscalls::sysvar::SyscallGetLastRestartSlotSysvar;
 #[allow(deprecated)]
 use {
     solana_program_runtime::{
@@ -67,7 +68,6 @@ use {
     },
     thiserror::Error as ThisError,
 };
-use crate::syscalls::sysvar::SyscallGetLastRestartSlotSysvar;
 
 mod cpi;
 mod logging;
@@ -262,7 +262,10 @@ pub fn create_loader<'a>(
         SyscallGetFeesSysvar::call,
     )?;
     result.register_function(b"sol_get_rent_sysvar", SyscallGetRentSysvar::call)?;
-    result.register_function(b"sol_get_last_restart_slot_sysvar", SyscallGetLastRestartSlotSysvar::call)?;
+    result.register_function(
+        b"sol_get_last_restart_slot_sysvar",
+        SyscallGetLastRestartSlotSysvar::call,
+    )?;
 
     // Memory ops
     result.register_function(b"sol_memcpy_", SyscallMemcpy::call)?;
