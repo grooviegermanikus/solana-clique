@@ -140,3 +140,11 @@ and de-activations per epoch. It is updated at the start of every epoch.
 - Address: `SysvarStakeHistory1111111111111111111111111`
 - Layout:
   [StakeHistory](https://docs.rs/solana-program/VERSION_FOR_DOCS_RS/solana_program/stake_history/struct.StakeHistory.html)
+
+## LastRestartSlot
+
+The LastRestartSlot sysvar contains the slot number of the last restart (hard fork).
+
+- Address: `SysvarLastRestartS1ot1111111111111111111111`
+- Layout:
+  [LastRestartSlot](https://docs.rs/solana-program/VERSION_FOR_DOCS_RS/solana_program/last_restart_slot/struct.LastRestartSlot.html)
