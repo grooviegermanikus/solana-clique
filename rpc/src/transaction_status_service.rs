@@ -1,3 +1,4 @@
+use std::time::Instant;
 use {
     crate::transaction_notifier_interface::TransactionNotifierLock,
     crossbeam_channel::{Receiver, RecvTimeoutError},
@@ -170,12 +171,17 @@ impl TransactionStatusService {
                         };
 
                         if let Some(transaction_notifier) = transaction_notifier.as_ref() {
+                            let start = Instant::now();
                             transaction_notifier.write().unwrap().notify_transaction(
                                 slot,
                                 transaction_index,
                                 transaction.signature(),
                                 &transaction_status_meta,
                                 &transaction,
+                            );
+                            warn!("elapsed blocking for notify_transaction: {}ms, channel len={}",
+                                start.elapsed().as_millis(),
+                                write_transaction_status_receiver.len(),
                             );
                         }
 
