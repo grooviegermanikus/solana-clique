@@ -1,3 +1,4 @@
+use std::sync::{Arc, RwLock};
 use {
     jsonrpc_core::{ErrorCode, Result as JsonRpcResult},
     jsonrpc_server_utils::tokio::sync::oneshot::Sender as OneShotSender,
@@ -122,7 +123,7 @@ impl GeyserPluginManager {
     ///
     /// The string returned is the name of the plugin loaded, which can only be accessed once
     /// the plugin has been loaded and calling the name method.
-    pub(crate) fn load_plugin(
+    pub fn load_plugin(
         &mut self,
         geyser_plugin_config_file: impl AsRef<Path>,
     ) -> JsonRpcResult<String> {
@@ -570,4 +571,18 @@ mod tests {
         assert!(unload_result.is_ok());
         assert_eq!(plugin_manager_lock.plugins.len(), 0);
     }
+}
+
+pub fn main() {
+    solana_logger::setup();
+
+    // Initialize empty manager
+    let plugin_manager = Arc::new(RwLock::new(GeyserPluginManager::new()));
+    let mut plugin_manager_lock = plugin_manager.write().unwrap();
+
+    // Load rpc call
+    let load_result = plugin_manager_lock.load_plugin("geyser-plugin-config.json");
+    assert!(load_result.is_ok());
+    assert_eq!(plugin_manager_lock.plugins.len(), 1);
+
 }
