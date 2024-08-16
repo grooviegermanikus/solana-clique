@@ -7,11 +7,12 @@ pub fn main() {
     // Initialize empty manager
     let plugin_manager = Arc::new(RwLock::new(GeyserPluginManager::new()));
     let mut plugin_manager_lock = plugin_manager.write().unwrap();
+    let filename = "geyser-plugin-config.json";
 
-    // Load rpc call
-    let load_result = plugin_manager_lock.load_plugin("geyser-plugin-config.json");
-    assert!(load_result.is_ok());
-    assert_eq!(plugin_manager_lock.plugins.len(), 1);
+    println!("Trying to load from config file {}", filename);
+    let load_result = plugin_manager_lock.load_plugin(filename);
+
+    println!("PLUGIN LOADED: {:?}", load_result.is_ok());
 
 
 }
